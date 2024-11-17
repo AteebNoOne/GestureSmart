@@ -1,0 +1,36 @@
+{
+  "name": "GestureSmart",
+  "displayName": "Gesture Smart",
+  "expo": {
+    "name": "GestureSmart",
+    "slug": "gesturesmart",
+    "version": "1.0.0",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to detect hand gestures.",
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
+        }
+      ]
+    ],
+    "android": {
+      "package": "com.ateebnoone.gesturesmart",
+      "permissions": [
+        "CAMERA",
+        "SYSTEM_ALERT_WINDOW",
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.ateebnoone.gesturesmart",
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app needs camera access to detect hand gestures",
+        "UIBackgroundModes": ["processing"]
+      }
+    }
+  }
+}
