@@ -1,25 +1,36 @@
-import { NativeModules, Platform, BackHandler, Dimensions } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 
-// Define the background task name
 const GESTURE_BACKGROUND_TASK = 'GESTURE_BACKGROUND_TASK';
 
-// Register background task
+// Define types for the native module
+interface GestureModule {
+  swipeLeft(): Promise<boolean>;
+  swipeRight(): Promise<boolean>;
+  tap(x: number, y: number): Promise<boolean>;
+  requestAccessibilityPermission(): Promise<boolean>;
+}
+
+// Type guard for the GestureModule
+const hasGestureModule = (
+  nativeModules: typeof NativeModules
+): nativeModules is typeof NativeModules & { GestureModule: GestureModule } => {
+  return 'GestureModule' in nativeModules;
+};
+
 TaskManager.defineTask(GESTURE_BACKGROUND_TASK, async () => {
   try {
-    // Keep the gesture service running in the background
     return BackgroundFetch.BackgroundFetchResult.NewData;
   } catch (error) {
     return BackgroundFetch.BackgroundFetchResult.Failed;
   }
 });
 
-// Register the background task
-export const registerBackgroundTask = async () => {
+export const registerBackgroundTask = async (): Promise<void> => {
   try {
     await BackgroundFetch.registerTaskAsync(GESTURE_BACKGROUND_TASK, {
-      minimumInterval: 1, // 1 second
+      minimumInterval: 1,
       stopOnTerminate: false,
       startOnBoot: true,
     });
@@ -28,68 +39,43 @@ export const registerBackgroundTask = async () => {
   }
 };
 
-// Handle swipe left gesture (Android-specific logic)
-export const handleSwipeLeft = async () => {
-  try {
-    if (Platform.OS === 'android') {
-      // Simulate back gesture on Android using BackHandler
-      BackHandler.exitApp(); // This exits the app, similar to a back gesture
-    } else {
-      // For iOS, handle custom navigation logic here
-      console.log("Swipe Left on iOS");
+export const handleSwipeLeft = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureModule(NativeModules)) {
+    try {
+      await NativeModules.GestureModule.swipeLeft();
+    } catch (error) {
+      console.error('Error performing swipe left:', error);
     }
-  } catch (error) {
-    console.error('Error handling swipe left:', error);
   }
 };
 
-// Handle swipe right gesture (Android-specific logic)
-export const handleSwipeRight = async () => {
-  try {
-    if (Platform.OS === 'android') {
-      // Simulate forward navigation or other gestures (adjust as needed)
-      console.log("Swipe Right on Android");
-    } else {
-      console.log("Swipe Right on iOS");
+export const handleSwipeRight = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureModule(NativeModules)) {
+    try {
+      await NativeModules.GestureModule.swipeRight();
+    } catch (error) {
+      console.error('Error performing swipe right:', error);
     }
-  } catch (error) {
-    console.error('Error handling swipe right:', error);
   }
 };
 
-// Handle tap gesture (Android-specific logic using NativeModules)
-export const handleTap = async () => {
-  try {
-    if (Platform.OS === 'android') {
-      // Simulate a tap at the center of the screen using custom native module
-      const { width, height } = Dimensions.get('window');
-      if (NativeModules.GestureModule) {
-        await NativeModules.GestureModule.tap(width / 2, height / 2);
-      } else {
-        console.log("GestureModule not available");
-      }
-    } else {
-      console.log("Tap on iOS");
+export const handleTap = async (x: number, y: number): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureModule(NativeModules)) {
+    try {
+      await NativeModules.GestureModule.tap(x, y);
+    } catch (error) {
+      console.error('Error performing tap:', error);
     }
-  } catch (error) {
-    console.error('Error handling tap:', error);
   }
 };
 
-// Handle wave gesture (Android-specific logic)
-export const handleWave = async () => {
-  try {
-    if (Platform.OS === 'android') {
-      // Open recent apps or perform other actions using a custom native module
-      if (NativeModules.GestureModule) {
-        await NativeModules.GestureModule.openRecentApps();
-      } else {
-        console.log("GestureModule not available");
-      }
-    } else {
-      console.log("Wave on iOS");
+export const handleWave = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureModule(NativeModules)) {
+    try {
+      // You can implement custom wave gesture behavior here
+      console.log('Wave gesture detected');
+    } catch (error) {
+      console.error('Error handling wave gesture:', error);
     }
-  } catch (error) {
-    console.error('Error handling wave:', error);
   }
 };

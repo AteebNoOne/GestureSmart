@@ -6,7 +6,9 @@
   "scripts": {
     "build-dep": "cd ../../../tfjs/tfjs-react-native && yarn build-npm",
     "copy-dep": "rm -rf node_modules/@tensorflow/tfjs-react-native/dist/* && cp -rf ../../../tfjs/tfjs-react-native/dist/* node_modules/@tensorflow/tfjs-react-native/dist/",
-    "start": "expo start"
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/config-plugins": "^5.0.0",
@@ -17,20 +19,25 @@
     "@tensorflow-models/pose-detection": "2.0.0",
     "@tensorflow/tfjs": "3.18.0",
     "@tensorflow/tfjs-react-native": "0.8.0",
-    "expo": "~46.0.2",
+    "expo": "~46.0.21",
     "expo-background-fetch": "~10.3.0",
     "expo-camera": "~12.5.0",
     "expo-file-system": "^14.1.0",
     "expo-gl": "^11.4.0",
     "expo-gl-cpp": "^11.4.0",
+    "expo-notifications": "~0.16.1",
     "expo-screen-orientation": "~4.3.0",
+    "expo-splash-screen": "~0.16.2",
+    "expo-status-bar": "~1.4.0",
     "expo-task-manager": "~10.3.0",
     "react": "18.0.0",
     "react-dom": "18.0.0",
     "react-native": "0.69.9",
     "react-native-fs": "2.14.1",
     "react-native-gesture-handler": "~2.5.0",
-    "react-native-svg": "12.3.0"
+    "react-native-keep-awake": "^4.0.0",
+    "react-native-svg": "12.3.0",
+    "react-native-web": "~0.18.7"
   },
   "devDependencies": {
     "@babel/core": "^7.9.0",

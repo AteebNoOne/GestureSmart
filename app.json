@@ -29,7 +29,9 @@
       "bundleIdentifier": "com.ateebnoone.gesturesmart",
       "infoPlist": {
         "NSCameraUsageDescription": "This app needs camera access to detect hand gestures",
-        "UIBackgroundModes": ["processing"]
+        "UIBackgroundModes": [
+          "processing"
+        ]
       }
     }
   }

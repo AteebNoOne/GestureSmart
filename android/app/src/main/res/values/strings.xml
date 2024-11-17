@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">posenet</string>
+  <string name="app_name">GestureSmart</string>
+  <string name="accessibility_service_description">GestureSmart Accessibility Service </string>
 </resources>
