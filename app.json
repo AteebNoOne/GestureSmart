@@ -22,15 +22,32 @@
       "permissions": [
         "CAMERA",
         "SYSTEM_ALERT_WINDOW",
-        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
-      ]
+        "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "BIND_ACCESSIBILITY_SERVICE",
+        "FOREGROUND_SERVICE",
+        "WAKE_LOCK",
+        "RECEIVE_BOOT_COMPLETED",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "POST_NOTIFICATIONS"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF"
+      },
+      "config": {
+        "googleServices": {
+          "provideAuthToken": true
+        }
+      }
     },
     "ios": {
       "bundleIdentifier": "com.ateebnoone.gesturesmart",
       "infoPlist": {
         "NSCameraUsageDescription": "This app needs camera access to detect hand gestures",
         "UIBackgroundModes": [
-          "processing"
+          "processing",
+          "fetch",
+          "remote-notification"
         ]
       }
     }

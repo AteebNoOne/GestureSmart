@@ -1,154 +1,184 @@
-export type Gesture = "swipe_left" | "swipe_right" | "tap" | "wave" | "none";
+import { Hand } from '@tensorflow-models/hand-pose-detection';
 
-export interface GestureDetectionResult {
+export type Gesture = 'tap' | 'follow_cursor' | 'close_cursor' | 'volume_up' | 'volume_down' | 'swipe_left' | 'swipe_right' | 'scroll_up' | 'scroll_down' | 'none';
+
+export interface GestureResult {
   gesture: Gesture;
   confidence: number;
 }
 
-// State management for temporal gestures
-const state = {
-  previousPalmPosition: null as number[] | null,
-  movementHistory: [] as Array<{ x: number, y: number, timestamp: number }>,
-  lastUpdateTime: Date.now()
+interface Keypoint {
+  x: number;
+  y: number;
+  z?: number;
+  score?: number;
+}
+
+// Simplified thresholds for more reliable detection
+const FINGER_CURVED_THRESHOLD = 60;    // More lenient curve detection
+const FINGER_EXTENDED_THRESHOLD = 140;  // More lenient extension detection
+const GESTURE_COOLDOWN = 500;          // Reduced cooldown for faster response
+const SWIPE_THRESHOLD = 100;          // Minimum distance for swipe detection
+const SWIPE_TIME_WINDOW = 500;        // Maximum time window for swipe detection in ms
+
+// Track hand movement
+let lastHandPosition: { x: number; y: number; timestamp: number } | null = null;
+let lastGestureTime = 0;
+
+// Simplified angle calculation
+const calculateAngle = (p1: Keypoint, p2: Keypoint, p3: Keypoint): number => {
+  const radians = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+  let angle = Math.abs((radians * 180) / Math.PI);
+  if (angle > 180) angle = 360 - angle;
+  return angle;
 };
 
-// Normalize coordinates to 0-1 range
-const normalizeCoordinates = (landmarks: number[][]): number[][] => {
-  let minX = Infinity, maxX = -Infinity;
-  let minY = Infinity, maxY = -Infinity;
-
-  // Find bounds
-  landmarks.forEach(point => {
-    minX = Math.min(minX, point[0]);
-    maxX = Math.max(maxX, point[0]);
-    minY = Math.min(minY, point[1]);
-    maxY = Math.max(maxY, point[1]);
-  });
-
-  // Normalize to 0-1 range
-  return landmarks.map(point => [
-    (point[0] - minX) / (maxX - minX || 1),
-    (point[1] - minY) / (maxY - minY || 1),
-    point[2]
-  ]);
+// Simplified finger state checks
+const isFingerExtended = (keypoints: Keypoint[], mcpIndex: number, pipIndex: number, tipIndex: number): boolean => {
+  const angle = calculateAngle(keypoints[mcpIndex], keypoints[pipIndex], keypoints[tipIndex]);
+  return angle > FINGER_EXTENDED_THRESHOLD;
 };
 
-// Calculate finger extension using relative positions
-const isFingerExtended = (base: number[], tip: number[]): boolean => {
-  const distance = Math.sqrt(
-    Math.pow(tip[0] - base[0], 2) +
-    Math.pow(tip[1] - base[1], 2)
-  );
-  // Use a relative threshold based on hand size
-  return distance > 0.1; // Normalized threshold
+const isFingerCurved = (keypoints: Keypoint[], mcpIndex: number, pipIndex: number, tipIndex: number): boolean => {
+  const angle = calculateAngle(keypoints[mcpIndex], keypoints[pipIndex], keypoints[tipIndex]);
+  return angle < FINGER_CURVED_THRESHOLD;
 };
 
-const calculateHandMovement = (currentPalm: number[]) => {
-  const currentTime = Date.now();
 
-  if (!state.previousPalmPosition) {
-    state.previousPalmPosition = currentPalm;
-    state.lastUpdateTime = currentTime;
-    return { direction: "none", speed: 0, isWaving: false };
-  }
-
-  const deltaX = currentPalm[0] - state.previousPalmPosition[0];
-  const deltaY = currentPalm[1] - state.previousPalmPosition[1];
-  const deltaTime = (currentTime - state.lastUpdateTime) / 1000;
-
-  if (deltaTime === 0) return { direction: "none", speed: 0, isWaving: false };
-
-  const speed = Math.sqrt(deltaX * deltaX + deltaY * deltaY) / deltaTime;
-
-  // Add to movement history
-  state.movementHistory.push({
-    x: currentPalm[0],
-    y: currentPalm[1],
-    timestamp: currentTime
-  });
-
-  // Keep only last 500ms of movement
-  state.movementHistory = state.movementHistory.filter(
-    entry => currentTime - entry.timestamp < 500
-  );
-
-  // Detect primary movement direction
-  const direction =
-    Math.abs(deltaX) > Math.abs(deltaY)
-      ? (Math.abs(deltaX) > 0.01 ? (deltaX > 0 ? "right" : "left") : "none")
-      : (Math.abs(deltaY) > 0.01 ? (deltaY > 0 ? "down" : "up") : "none");
-
-  state.previousPalmPosition = currentPalm;
-  state.lastUpdateTime = currentTime;
-
+// Calculate hand center position
+const getHandCenter = (keypoints: Keypoint[]): { x: number; y: number } => {
+  const sum = keypoints.reduce((acc, point) => ({
+    x: acc.x + point.x,
+    y: acc.y + point.y
+  }), { x: 0, y: 0 });
+  
   return {
-    direction,
-    speed,
-    isWaving: detectWaving(state.movementHistory)
+    x: sum.x / keypoints.length,
+    y: sum.y / keypoints.length
   };
 };
 
-const detectWaving = (history: Array<{ x: number, y: number, timestamp: number }>): boolean => {
-  if (history.length < 4) return false;
-
-  let directionChanges = 0;
-  let previousDeltaX = history[1].x - history[0].x;
-
-  for (let i = 2; i < history.length; i++) {
-    const currentDeltaX = history[i].x - history[i - 1].x;
-    if (Math.abs(currentDeltaX) > 0.01 && // Threshold for movement
-      Math.sign(currentDeltaX) !== Math.sign(previousDeltaX)) {
-      directionChanges++;
-    }
-    previousDeltaX = currentDeltaX;
+// Detect swipe movement
+const detectSwipe = (currentPosition: { x: number; y: number }, currentTime: number): Gesture => {
+  if (!lastHandPosition) {
+    lastHandPosition = { ...currentPosition, timestamp: currentTime };
+    return 'none';
   }
 
-  return directionChanges >= 2;
+  // Check if the movement is within the time window
+  if (currentTime - lastHandPosition.timestamp > SWIPE_TIME_WINDOW) {
+    lastHandPosition = { ...currentPosition, timestamp: currentTime };
+    return 'none';
+  }
+
+  const deltaX = currentPosition.x - lastHandPosition.x;
+  const deltaTime = currentTime - lastHandPosition.timestamp;
+  const velocity = Math.abs(deltaX) / deltaTime;
+
+  // Update last position
+  lastHandPosition = { ...currentPosition, timestamp: currentTime };
+
+  // Check if movement exceeds threshold and has sufficient velocity
+  if (Math.abs(deltaX) > SWIPE_THRESHOLD && velocity > 0.5) {
+    return deltaX > 0 ? 'swipe_right' : 'swipe_left';
+  }
+
+  return 'none';
 };
 
-export const detectGesture = (landmarks: number[][]): GestureDetectionResult => {
-  if (!landmarks || landmarks.length !== 21) {
-    return { gesture: "none", confidence: 0 };
+export const detectGesture = (hands: Hand[]): GestureResult => {
+  if (!hands || hands.length === 0 || hands[0].score < 0.8) {
+    return { gesture: 'none', confidence: 0 };
   }
 
-  // Normalize coordinates
-  const normalizedLandmarks = normalizeCoordinates(landmarks);
+  const hand = hands[0];
+  const keypoints = hand.keypoints;
+  const currentTime = Date.now();
 
-  // Extract key points
-  const palm = normalizedLandmarks[0];
-  const indexTip = normalizedLandmarks[8];
-  const middleTip = normalizedLandmarks[12];
-  const ringTip = normalizedLandmarks[16];
-  const pinkyTip = normalizedLandmarks[20];
+  // Skip gesture detection during cooldown
+  if (currentTime - lastGestureTime < GESTURE_COOLDOWN) {
+    return { gesture: 'none', confidence: hand.score };
+  }
 
-  // Check finger extensions
-  const indexExtended = isFingerExtended(normalizedLandmarks[5], indexTip);
-  const middleExtended = isFingerExtended(normalizedLandmarks[9], middleTip);
-  const ringExtended = isFingerExtended(normalizedLandmarks[13], ringTip);
-  const pinkyExtended = isFingerExtended(normalizedLandmarks[17], pinkyTip);
+  // Check finger states
+  const isIndexExtended = isFingerExtended(keypoints, 5, 6, 8);
+  const isMiddleExtended = isFingerExtended(keypoints, 9, 10, 12);
+  const isRingExtended = isFingerExtended(keypoints, 13, 14, 16);
+  const isPinkyExtended = isFingerExtended(keypoints, 17, 18, 20);
 
-  const handMovement = calculateHandMovement(palm);
+  // Detect gestures based on simplified patterns:
 
-  // Detect gestures
-  if (handMovement.direction === "left" && handMovement.speed > 0.5) {
-    if (indexExtended && middleExtended) {
-      return { gesture: "swipe_left", confidence: Math.min(handMovement.speed / 2, 1) };
+  // Get current hand position
+  const handCenter = getHandCenter(keypoints);
+
+
+  // Check for swipe gestures when fingers are extended
+  if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended) {
+    const swipeGesture = detectSwipe(handCenter, currentTime);
+    if (swipeGesture !== 'none') {
+      lastGestureTime = currentTime;
+      return { gesture: swipeGesture, confidence: hand.score };
     }
   }
 
-  if (handMovement.direction === "right" && handMovement.speed > 0.5) {
-    if (indexExtended && middleExtended) {
-      return { gesture: "swipe_right", confidence: Math.min(handMovement.speed / 2, 1) };
+  // 1. Tap: Only index finger extended
+  if (isIndexExtended && !isMiddleExtended && !isRingExtended && !isPinkyExtended) {
+    lastGestureTime = currentTime;
+    return { gesture: 'tap', confidence: hand.score };
+  }
+
+  // 2. Follow Cursor: Index and middle fingers extended (peace sign)
+  if (isIndexExtended && isMiddleExtended && !isRingExtended && !isPinkyExtended) {
+    lastGestureTime = currentTime;
+    return { gesture: 'follow_cursor', confidence: hand.score };
+  }
+
+    // 2. Follow Cursor: Index and middle fingers extended (peace sign)
+    if (isIndexExtended && isMiddleExtended && isRingExtended && !isPinkyExtended) {
+      lastGestureTime = currentTime;
+      return { gesture: 'close_cursor', confidence: hand.score };
+    }
+
+  // 3. Volume Controls: Thumb + Index forms L shape
+  // Volume Up: L shape pointing up
+  if (isIndexExtended && keypoints[4].y < keypoints[8].y) {
+    lastGestureTime = currentTime;
+    return { gesture: 'volume_up', confidence: hand.score };
+  }
+  
+  // Volume Down: L shape pointing down
+  if (isIndexExtended && keypoints[4].y > keypoints[8].y) {
+    lastGestureTime = currentTime;
+    return { gesture: 'volume_down', confidence: hand.score };
+  }
+
+  // 4. Swipe Detection: All fingers extended, check hand orientation
+  if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended) {
+    // Swipe Left: Palm facing left
+    if (keypoints[0].x > keypoints[5].x) {
+      lastGestureTime = currentTime;
+      return { gesture: 'swipe_left', confidence: hand.score };
+    }
+    // Swipe Right: Palm facing right
+    if (keypoints[0].x < keypoints[5].x) {
+      lastGestureTime = currentTime;
+      return { gesture: 'swipe_right', confidence: hand.score };
     }
   }
 
-  if (indexExtended && !middleExtended && !ringExtended && !pinkyExtended) {
-    return { gesture: "tap", confidence: 0.9 };
+  // 5. Scroll Controls: Based on closed/open fist
+  // Scroll Up: Closed fist (all fingers curved)
+  if (!isIndexExtended && !isMiddleExtended && !isRingExtended && !isPinkyExtended) {
+    lastGestureTime = currentTime;
+    return { gesture: 'scroll_up', confidence: hand.score };
+  }
+  
+  // Scroll Down: Open palm facing down
+  if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended && 
+      keypoints[8].y > keypoints[5].y) {
+    lastGestureTime = currentTime;
+    return { gesture: 'scroll_down', confidence: hand.score };
   }
 
-  if (handMovement.isWaving && indexExtended && middleExtended && ringExtended && pinkyExtended) {
-    return { gesture: "wave", confidence: 0.85 };
-  }
-
-  return { gesture: "none", confidence: 0 };
+  return { gesture: 'none', confidence: hand.score };
 };

@@ -4,7 +4,8 @@ import { Camera, CameraType } from 'expo-camera';
 import { ExpoWebGLRenderingContext } from 'expo-gl';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as tf from '@tensorflow/tfjs';
-import * as handPoseDetection from '@tensorflow-models/hand-pose-detection';
+import * as handpose from '@tensorflow-models/handpose';
+import * as handdetection from '@tensorflow-models/hand-pose-detection';
 import '@tensorflow/tfjs-react-native';
 import { cameraWithTensors } from '@tensorflow/tfjs-react-native';
 import * as BackgroundFetch from 'expo-background-fetch';
@@ -12,13 +13,13 @@ import * as TaskManager from 'expo-task-manager';
 import { detectGesture, Gesture } from './utils/detectGesture';
 import { handleSwipeLeft, handleSwipeRight, handleTap, handleWave } from './features/actions';
 import * as Notifications from 'expo-notifications';
-
 const BACKGROUND_TASK_NAME = 'GESTURE_DETECTION';
 const NOTIFICATION_ID = 'gesture-service-notification';
 
 const TensorCamera = cameraWithTensors(Camera);
 const OUTPUT_TENSOR_WIDTH = 120;
 const OUTPUT_TENSOR_HEIGHT = 160;
+const PROCESS_INTERVAL = 10;
 const CONFIDENCE_THRESHOLD = 0.8;
 
 // Configure foreground notification
@@ -38,6 +39,7 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
   }
 
   try {
+    // Keep the service alive
     await showForegroundNotification();
     return BackgroundFetch.BackgroundFetchResult.NewData;
   } catch (e) {
@@ -70,7 +72,7 @@ const GestureService: React.FC = () => {
   const cameraRef = useRef<Camera>();
   const processingRef = useRef<boolean>(false);
   const keepAwakeRef = useRef<boolean>(false);
-  const detectorRef = useRef<handPoseDetection.HandDetector | null>(null);
+  const modelRef = useRef<handpose.HandPose | null>(null);
 
   const [state, setState] = useState<{
     isRunning: boolean;
@@ -99,32 +101,32 @@ const GestureService: React.FC = () => {
         if (cameraPermission.status !== 'granted') {
           throw new Error('Camera permission required');
         }
-
-        // Initialize TensorFlow
-        await tf.ready();
         await tf.setBackend('rn-webgl');
 
+        // Initialize TensorFlow and model
+        await tf.ready();
+
+
         // Configure WebGL for better mobile performance
-        tf.env().set('WEBGL_PACK', false);
+        tf.env().set('WEBGL_PACK', false); // Set to false for React Native
         tf.env().set('WEBGL_FORCE_F16_TEXTURES', false);
+
+
+        // Configure WebGL for better mobile performance
+        tf.env().set('WEBGL_PACK', true);
+        tf.env().set('WEBGL_FORCE_F16_TEXTURES', true);
         tf.env().set('WEBGL_FLUSH_THRESHOLD', 1);
-
-        // Initialize hand pose detector with TF.js runtime
-        const model = handPoseDetection.SupportedModels.MediaPipeHands;
-        const detectorConfig: handPoseDetection.MediaPipeHandsTfjsModelConfig = {
-          runtime: 'tfjs',
-          modelType: 'lite',
-          maxHands: 1,
-        };
-
-        detectorRef.current = await handPoseDetection.createDetector(
-          model,
-          detectorConfig
-        );
+        // Load lite model with optimized settings
+        modelRef.current = await handpose.load({
+          maxContinuousChecks: 5, // Reduced from default
+          detectionConfidence: 0.7, // Slightly reduced for better performance
+          iouThreshold: 0.3, // Adjusted for mobile
+          scoreThreshold: 0.75,
+        });
 
         // Register background task
         await BackgroundFetch.registerTaskAsync(BACKGROUND_TASK_NAME, {
-          minimumInterval: 1,
+          minimumInterval: 1, // 1 second
           stopOnTerminate: false,
           startOnBoot: true,
         });
@@ -162,6 +164,7 @@ const GestureService: React.FC = () => {
         appState.current.match(/inactive|background/) &&
         nextAppState === 'active'
       ) {
+        // App has come to foreground
         if (state.isRunning) {
           showForegroundNotification();
         }
@@ -169,6 +172,7 @@ const GestureService: React.FC = () => {
         appState.current === 'active' &&
         nextAppState.match(/inactive|background/)
       ) {
+        // App has gone to background
         if (state.isRunning) {
           processingRef.current = true;
           showForegroundNotification();
@@ -202,25 +206,26 @@ const GestureService: React.FC = () => {
     gl: ExpoWebGLRenderingContext
   ) => {
     const processFrame = async () => {
-      if (!processingRef.current || !detectorRef.current) return;
+      if (!processingRef.current || !modelRef.current) return;
 
       try {
         const imageTensor = images.next().value;
         if (!imageTensor) return;
 
-        const hands = await detectorRef.current.estimateHands(imageTensor);
-        // console.log("Hands?",hands);
+        const predictions = await modelRef.current.estimateHands(imageTensor);
         
-        if (hands.length > 0) {
-          const gestureResult = detectGesture(hands);
-          console.log("Res",gestureResult)
-          // if (gestureResult.gesture !== 'none') {
-          //   handleGesture(gestureResult.gesture);
+        if (predictions.length > 0) {
+          const result = detectGesture(predictions[0].landmarks);
+          console.log("Pred", result)
+          // if (result.confidence > CONFIDENCE_THRESHOLD) {
+
+          //   handleGesture(result.gesture);
           // }
         }
 
         tf.dispose(imageTensor);
 
+        // Continue processing frames
         if (processingRef.current) {
           requestAnimationFrame(processFrame);
         }
@@ -237,14 +242,17 @@ const GestureService: React.FC = () => {
 
   const handleGesture = (gesture: Gesture) => {
     switch (gesture) {
-      case 'follow_cursor':
+      case 'swipe_left':
         handleSwipeLeft();
         break;
-      case 'close_cursor':
+      case 'swipe_right':
         handleSwipeRight();
         break;
       case 'tap':
         handleTap(0, 0);
+        break;
+      case 'wave':
+        handleWave();
         break;
     }
   };
@@ -335,8 +343,8 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   camera: {
-    width: 1,
-    height: 1,
+    width: 200,
+    height: 200,
     opacity: 0,
   },
 });

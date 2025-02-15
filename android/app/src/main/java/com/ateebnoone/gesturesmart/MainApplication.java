@@ -14,6 +14,7 @@ import com.facebook.react.config.ReactFeatureFlags;
 import com.facebook.soloader.SoLoader;
 import com.ateebnoone.gesturesmart.newarchitecture.MainApplicationReactNativeHost;
 
+
 import expo.modules.ApplicationLifecycleDispatcher;
 import expo.modules.ReactNativeHostWrapper;
 
@@ -21,8 +22,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 
 public class MainApplication extends Application implements ReactApplication {
-
-  
   private final ReactNativeHost mReactNativeHost = new ReactNativeHostWrapper(
     this,
     new ReactNativeHost(this) {
@@ -37,12 +36,10 @@ public class MainApplication extends Application implements ReactApplication {
       List<ReactPackage> packages = new PackageList(this).getPackages();
       // Packages that cannot be autolinked yet can be added manually here, for example:
       // packages.add(new MyReactNativePackage());
-      packages.add(new GesturePackage());
+      packages.add(new OverlayPackage()); // Add this line in getPackages()
+      packages.add(new NavigationPackage());
       return packages;
     }
-
-
-
 
     @Override
     protected String getJSMainModuleName() {
@@ -78,7 +75,6 @@ public class MainApplication extends Application implements ReactApplication {
     super.onConfigurationChanged(newConfig);
     ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig);
   }
-  
 
   /**
    * Loads Flipper in React Native templates. Call this in the onCreate method with something like

@@ -4,7 +4,11 @@
     "jsx": "react-native",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "lib": ["es2015", "es2016", "esnext"],
+    "lib": [
+      "es2015",
+      "es2016",
+      "esnext"
+    ],
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
     "noImplicitAny": true,
@@ -13,5 +17,6 @@
     "strictPropertyInitialization": true,
     "noImplicitThis": true,
     "alwaysStrict": true
-  }
+  },
+  "extends": "expo/tsconfig.base"
 }
