@@ -1,19 +1,17 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, AppState, Platform, Dimensions } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, AppState, Platform } from 'react-native';
 import { Camera, CameraType } from 'expo-camera';
 import { ExpoWebGLRenderingContext } from 'expo-gl';
 import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
 import * as tf from '@tensorflow/tfjs';
-import * as handPoseDetection from '@tensorflow-models/hand-pose-detection';
 import '@tensorflow/tfjs-react-native';
+import * as handPoseDetection from '@tensorflow-models/hand-pose-detection';
 import { cameraWithTensors } from '@tensorflow/tfjs-react-native';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
-import { detectGesture, Gesture } from './src/utils/detectGesture';
-import { handleSwipeLeft, handleSwipeRight, handleTap } from './src/features/actions';
+import { handleSwipeLeft, handleSwipeRight, handleTap, handleWave } from '../features/actions';
 import * as Notifications from 'expo-notifications';
-import BackgroundCameraService from './src/services/BackgroundCameraService';
-import RNOverlayWindow from 'react-native-overlay-window';
+import { detectGesture, Gesture } from '../utils/detectGesture';
 
 const BACKGROUND_TASK_NAME = 'GESTURE_DETECTION';
 const NOTIFICATION_ID = 'gesture-service-notification';
@@ -21,9 +19,6 @@ const NOTIFICATION_ID = 'gesture-service-notification';
 const TensorCamera = cameraWithTensors(Camera);
 const OUTPUT_TENSOR_WIDTH = 120;
 const OUTPUT_TENSOR_HEIGHT = 160;
-const WINDOW_WIDTH = 150;
-const WINDOW_HEIGHT = 200;
-
 const CONFIDENCE_THRESHOLD = 0.8;
 
 // Configure foreground notification
@@ -54,7 +49,7 @@ TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
 const showForegroundNotification = async () => {
   await Notifications.setNotificationChannelAsync('gesture-service', {
     name: 'Gesture Service',
-    importance: Notifications.AndroidImportance.HIGH,
+    importance: Notifications.AndroidImportance.LOW,
     vibrationPattern: [0, 0, 0],
     lightColor: '#FF231F7C',
   });
@@ -71,11 +66,6 @@ const showForegroundNotification = async () => {
 };
 
 const GestureService: React.FC = () => {
-  const [overlayPermission, setOverlayPermission] = useState(false);
-  const [position, setPosition] = useState({
-    x: Dimensions.get('window').width - WINDOW_WIDTH - 20,
-    y: 100
-  });
   const appState = useRef(AppState.currentState);
   const cameraRef = useRef<Camera>();
   const processingRef = useRef<boolean>(false);
@@ -91,55 +81,6 @@ const GestureService: React.FC = () => {
     isInitialized: false,
     status: 'initializing',
   });
-
-  useEffect(() => {
-    const setupOverlay = async () => {
-      if (Platform.OS === 'android') {
-        const hasPermission = await RNOverlayWindow.checkOverlayPermission();
-        if (!hasPermission) {
-          await RNOverlayWindow.requestOverlayPermission();
-        }
-        setOverlayPermission(true);
-      }
-    };
-
-    setupOverlay();
-  }, []);
-
-
-  const showOverlayWindow = async () => {
-    if (Platform.OS === 'android' && overlayPermission) {
-      await RNOverlayWindow.showOverlay({
-        height: WINDOW_HEIGHT,
-        width: WINDOW_WIDTH,
-        x: position.x,
-        y: position.y,
-        draggable: true,
-        content: (
-          <View style={styles.overlayContainer}>
-            <TensorCamera
-              ref={cameraRef}
-              style={styles.overlayCamera}
-              type={CameraType.front}
-              resizeWidth={OUTPUT_TENSOR_WIDTH}
-              resizeHeight={OUTPUT_TENSOR_HEIGHT}
-              resizeDepth={3}
-              autorender={true}
-              onReady={handleCameraStream}
-              useCustomShadersToResize={false}
-            />
-            <TouchableOpacity 
-              style={styles.closeButton}
-              onPress={() => RNOverlayWindow.hideOverlay()}
-            >
-              <Text style={styles.closeButtonText}>×</Text>
-            </TouchableOpacity>
-          </View>
-        )
-      });
-    }
-  };
-
 
   // Initialize TensorFlow and permissions
   useEffect(() => {
@@ -272,7 +213,7 @@ const GestureService: React.FC = () => {
         
         if (hands.length > 0) {
           const gestureResult = detectGesture(hands);
-          console.log("Gesture:: ",gestureResult)
+          console.log("Res",gestureResult)
           // if (gestureResult.gesture !== 'none') {
           //   handleGesture(gestureResult.gesture);
           // }
@@ -305,22 +246,19 @@ const GestureService: React.FC = () => {
       case 'tap':
         handleTap(0, 0);
         break;
-
     }
   };
 
-   const toggleService = async () => {
+  const toggleService = async () => {
     try {
       if (!state.isRunning) {
-        await showOverlayWindow();
-        processingRef.current = true;
+        await showForegroundNotification();
         await safeActivateKeepAwake();
+        processingRef.current = true;
       } else {
-        if (Platform.OS === 'android') {
-          await RNOverlayWindow.hideOverlay();
-        }
-        processingRef.current = false;
+        await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_ID);
         await safeDeactivateKeepAwake();
+        processingRef.current = false;
       }
 
       setState(prev => ({
@@ -332,7 +270,6 @@ const GestureService: React.FC = () => {
       console.error('Error toggling service:', error);
     }
   };
-
 
   return (
     <View style={styles.container}>
@@ -348,6 +285,22 @@ const GestureService: React.FC = () => {
       <Text style={styles.status}>
         Status: {state.status.charAt(0).toUpperCase() + state.status.slice(1)}
       </Text>
+
+      {state.isRunning && (
+        <TensorCamera
+          ref={cameraRef}
+          style={styles.camera}
+          type={CameraType.front}
+          resizeWidth={OUTPUT_TENSOR_WIDTH}
+          resizeHeight={OUTPUT_TENSOR_HEIGHT}
+          resizeDepth={3}
+          autorender={true}
+          onReady={handleCameraStream}
+          useCustomShadersToResize={false}
+          cameraTextureWidth={1}
+          cameraTextureHeight={1}
+        />
+      )}
     </View>
   );
 };
@@ -386,33 +339,6 @@ const styles = StyleSheet.create({
     height: 1,
     opacity: 0,
   },
-  overlayContainer: {
-    width: WINDOW_WIDTH,
-    height: WINDOW_HEIGHT,
-    backgroundColor: 'black',
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
-  overlayCamera: {
-    width: '100%',
-    height: '100%',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 5,
-    right: 5,
-    width: 24,
-    height: 24,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-  }
 });
 
 export default GestureService;

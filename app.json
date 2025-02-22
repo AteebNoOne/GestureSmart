@@ -1,6 +1,4 @@
 {
-  "name": "GestureSmart",
-  "displayName": "Gesture Smart",
   "expo": {
     "name": "GestureSmart",
     "slug": "gesturesmart",
@@ -15,7 +13,8 @@
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to detect hand gestures.",
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
         }
-      ]
+      ],
+      "expo-build-properties"
     ],
     "android": {
       "package": "com.ateebnoone.gesturesmart",
@@ -33,11 +32,6 @@
       ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF"
-      },
-      "config": {
-        "googleServices": {
-          "provideAuthToken": true
-        }
       }
     },
     "ios": {
@@ -50,6 +44,9 @@
           "remote-notification"
         ]
       }
+    },
+    "splash": {
+      "backgroundColor": "#FFFFFF"
     }
   }
 }

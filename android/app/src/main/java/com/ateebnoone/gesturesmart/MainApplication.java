@@ -14,7 +14,6 @@ import com.facebook.react.config.ReactFeatureFlags;
 import com.facebook.soloader.SoLoader;
 import com.ateebnoone.gesturesmart.newarchitecture.MainApplicationReactNativeHost;
 
-
 import expo.modules.ApplicationLifecycleDispatcher;
 import expo.modules.ReactNativeHostWrapper;
 
@@ -36,8 +35,6 @@ public class MainApplication extends Application implements ReactApplication {
       List<ReactPackage> packages = new PackageList(this).getPackages();
       // Packages that cannot be autolinked yet can be added manually here, for example:
       // packages.add(new MyReactNativePackage());
-      packages.add(new OverlayPackage()); // Add this line in getPackages()
-      packages.add(new NavigationPackage());
       return packages;
     }
 
