@@ -279,14 +279,27 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: colors.secondary }]}
-            onPress={() => navigation.navigate('Settings')}
+            onPress={() => navigation.navigate('VoiceServiceScreen')}
           >
             <MaterialCommunityIcons
-              name="cog"
+              name="microphone"
               size={Math.round(responsiveFontSize(2.2))}
               color="#FFFFFF"
             />
-            <Text style={styles.actionButtonText}>Settings</Text>
+            <Text style={styles.actionButtonText}>Voice Service</Text>
+          </TouchableOpacity>
+
+          
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: colors.secondary }]}
+            onPress={() => navigation.navigate('EyeTracking')}
+          >
+            <MaterialCommunityIcons
+              name="eye-outline"
+              size={Math.round(responsiveFontSize(2.2))}
+              color="#FFFFFF"
+            />
+            <Text style={styles.actionButtonText}>Eye Tracking</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

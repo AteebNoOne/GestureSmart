@@ -19,6 +19,8 @@ export type MainDrawerParamList = {
   Privacy: undefined;
   Settings: undefined;
   About: undefined;
+  EyeTracking: undefined;
+  VoiceServiceScreen: undefined;
 };
 
 export interface HandLandmark {

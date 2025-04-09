@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { StatusBar } from 'react-native';
+import { StatusBar } from "react-native";
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator, DrawerContentComponentProps } from '@react-navigation/drawer';
@@ -21,19 +21,23 @@ import { AboutScreen } from '../screens/AboutScreen';
 import { TermsConditionsScreen } from '../screens/TermsConditionsScreen';
 import { PrivacyPolicyScreen } from '../screens/PrivacyPolicyScreen';
 import { HomeScreen } from '../screens/HomeScreen';
+import EyeTrackingService from '../screens/EyeTrackingScreen';
+import VoiceService from '../screens/VoiceServiceScreen';
+import EyeTracking from '../screens/EyeTracking';
+// import VoiceService from '../screens/VoiceServiceScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const Drawer = createDrawerNavigator<MainDrawerParamList>();
 
 const AuthNavigator = () => (
-    <AuthStack.Navigator screenOptions={{ headerShown: false }}>
-      <AuthStack.Screen name="Login" component={LoginScreen} />
-      <AuthStack.Screen name="Signup" component={SignupScreen} />
-      <AuthStack.Screen name="Detection" component={GestureService} />
-    </AuthStack.Navigator>
-  );
-  
+  <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+    <AuthStack.Screen name="Login" component={LoginScreen} />
+    <AuthStack.Screen name="Signup" component={SignupScreen} />
+    <AuthStack.Screen name="Detection" component={GestureService} />
+  </AuthStack.Navigator>
+);
+
 // Drawer navigator component
 const DrawerNavigator = () => (
   <Drawer.Navigator
@@ -51,7 +55,7 @@ const DrawerNavigator = () => (
       component={HomeScreen}
       options={{ title: 'Home' }}
     />
- 
+
     <Drawer.Screen
       name="Profile"
       component={ProfileScreen}
@@ -83,6 +87,22 @@ const DrawerNavigator = () => (
       component={PrivacyPolicyScreen}
       options={{ title: 'PrivacyPolicyScreen' }}
     />
+    {/* <Drawer.Screen
+      name="EyeTracking"
+      component={EyeTrackingService}
+      options={{ title: 'EyeTrackingScreen' }}
+    /> */}
+    <Drawer.Screen
+      name="EyeTracking"
+      component={EyeTracking}
+      options={{ title: 'EyeTrackingScreen' }}
+    />
+    <Drawer.Screen
+      name="VoiceServiceScreen"
+      component={VoiceService}
+      options={{ title: 'VoiceServiceScreen' }}
+    />
+
 
   </Drawer.Navigator>
 );

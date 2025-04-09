@@ -76,22 +76,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       email: "",
       password: ""
     });
-
-    try {
-      if (email === "ateebnoone" && password === "123123") {
-        navigation.navigate('MainApp');
-      } else {
-        setErrors(prev => ({
-          ...prev,
-          password: "Invalid email or password"
-        }));
-      }
-    } catch (error) {
-      setErrors(prev => ({
-        ...prev,
-        password: "Invalid email or password"
-      }));
-    }
+    navigation.navigate('MainApp');
+    // try {
+    //   if (email === "ateebnoone" && password === "123123") {
+    //     navigation.navigate('MainApp');
+    //   } else {
+    //     setErrors(prev => ({
+    //       ...prev,
+    //       password: "Invalid email or password"
+    //     }));
+    //   }
+    // } catch (error) {
+    //   setErrors(prev => ({
+    //     ...prev,
+    //     password: "Invalid email or password"
+    //   }));
+    // }
   };
 
   const handleDetectWithoutLogin = () => {

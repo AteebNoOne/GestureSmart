@@ -1,83 +1,137 @@
 package com.ateebnoone.gesturesmart;
 
+import android.app.PictureInPictureParams;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Rational;
+import android.view.WindowManager;
 
 import com.facebook.react.ReactActivity;
 import com.facebook.react.ReactActivityDelegate;
 import com.facebook.react.ReactRootView;
+import com.facebook.react.modules.core.DeviceEventManagerModule;
 
 import expo.modules.ReactActivityDelegateWrapper;
 
 public class MainActivity extends ReactActivity {
-  @Override
-  protected void onCreate(Bundle savedInstanceState) {
-    // Set the theme to AppTheme BEFORE onCreate to support 
-    // coloring the background, status bar, and navigation bar.
-    // This is required for expo-splash-screen.
-    setTheme(R.style.AppTheme);
-    super.onCreate(null);
-  }
+    private boolean isInPipMode = false;
 
-  /**
-   * Returns the name of the main component registered from JavaScript.
-   * This is used to schedule rendering of the component.
-   */
-  @Override
-  protected String getMainComponentName() {
-    return "main";
-  }
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        setTheme(R.style.AppTheme);
+        super.onCreate(null);
+        
+        // Keep screen on during PiP
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
 
-  /**
-   * Returns the instance of the {@link ReactActivityDelegate}. There the RootView is created and
-   * you can specify the renderer you wish to use - the new renderer (Fabric) or the old renderer
-   * (Paper).
-   */
-  @Override
-  protected ReactActivityDelegate createReactActivityDelegate() {
-    return new ReactActivityDelegateWrapper(this, BuildConfig.IS_NEW_ARCHITECTURE_ENABLED,
-      new MainActivityDelegate(this, getMainComponentName())
-    );
-  }
+    @Override
+    protected String getMainComponentName() {
+        return "main";
+    }
 
-  /**
-   * Align the back button behavior with Android S
-   * where moving root activities to background instead of finishing activities.
-   * @see <a href="https://developer.android.com/reference/android/app/Activity#onBackPressed()">onBackPressed</a>
-   */
-  @Override
-  public void invokeDefaultOnBackPressed() {
-    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
-      if (!moveTaskToBack(false)) {
-        // For non-root activities, use the default implementation to finish them.
+    @Override
+    protected ReactActivityDelegate createReactActivityDelegate() {
+        return new ReactActivityDelegateWrapper(this, BuildConfig.IS_NEW_ARCHITECTURE_ENABLED,
+            new MainActivityDelegate(this, getMainComponentName())
+        );
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        isInPipMode = isInPictureInPictureMode;
+
+        // Prevent activity recreation
+        if (isInPictureInPictureMode) {
+            // Minimize UI elements when in PiP
+            if (getSupportActionBar() != null) {
+                getSupportActionBar().hide();
+            }
+        } else {
+            // Restore UI elements when exiting PiP
+            if (getSupportActionBar() != null) {
+                getSupportActionBar().show();
+            }
+        }
+    }
+
+    @Override
+    public void onUserLeaveHint() {
+        // Don't call super to prevent default behavior
+        if (!isInPipMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                Rational aspectRatio = new Rational(16, 9);
+                PictureInPictureParams.Builder params = new PictureInPictureParams.Builder();
+                params.setAspectRatio(aspectRatio);
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    params.setAutoEnterEnabled(true);
+                }
+                
+                enterPictureInPictureMode(params.build());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (isInPipMode) {
+            // Do nothing when in PiP mode
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override
+    public void invokeDefaultOnBackPressed() {
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
+            if (!isInPipMode) {
+                if (!moveTaskToBack(false)) {
+                    super.invokeDefaultOnBackPressed();
+                }
+            }
+            return;
+        }
         super.invokeDefaultOnBackPressed();
-      }
-      return;
-    }
-
-    // Use the default back button implementation on Android S
-    // because it's doing more than {@link Activity#moveTaskToBack} in fact.
-    super.invokeDefaultOnBackPressed();
-  }
-
-  public static class MainActivityDelegate extends ReactActivityDelegate {
-    public MainActivityDelegate(ReactActivity activity, String mainComponentName) {
-      super(activity, mainComponentName);
     }
 
     @Override
-    protected ReactRootView createRootView() {
-      ReactRootView reactRootView = new ReactRootView(getContext());
-      // If you opted-in for the New Architecture, we enable the Fabric Renderer.
-      reactRootView.setIsFabric(BuildConfig.IS_NEW_ARCHITECTURE_ENABLED);
-      return reactRootView;
+    protected void onStop() {
+        // Don't finish the activity when going to background if in PiP mode
+            super.onStop();
+
+        if (!isInPipMode) {
+            super.onStop();
+        }
     }
 
     @Override
-    protected boolean isConcurrentRootEnabled() {
-      // If you opted-in for the New Architecture, we enable Concurrent Root (i.e. React 18).
-      // More on this on https://reactjs.org/blog/2022/03/29/react-v18.html
-      return BuildConfig.IS_NEW_ARCHITECTURE_ENABLED;
+    protected void onPause() {
+        // Don't pause the activity when in PiP mode
+        if (!isInPipMode) {
+            super.onPause();
+        }
     }
-  }
+
+    public static class MainActivityDelegate extends ReactActivityDelegate {
+        public MainActivityDelegate(ReactActivity activity, String mainComponentName) {
+            super(activity, mainComponentName);
+        }
+
+        @Override
+        protected ReactRootView createRootView() {
+            ReactRootView reactRootView = new ReactRootView(getContext());
+            reactRootView.setIsFabric(BuildConfig.IS_NEW_ARCHITECTURE_ENABLED);
+            return reactRootView;
+        }
+
+        @Override
+        protected boolean isConcurrentRootEnabled() {
+            return BuildConfig.IS_NEW_ARCHITECTURE_ENABLED;
+        }
+    }
 }

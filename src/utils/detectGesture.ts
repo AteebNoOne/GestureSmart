@@ -1,6 +1,17 @@
 import { Hand } from '@tensorflow-models/hand-pose-detection';
 
-export type Gesture = 'tap' | 'follow_cursor' | 'close_cursor' | 'volume_up' | 'volume_down' | 'swipe_left' | 'swipe_right' | 'scroll_up' | 'scroll_down' | 'none';
+export type Gesture =
+  | 'tap'
+  | 'follow_cursor'
+  | 'close_cursor'
+  | 'volume_up'
+  | 'volume_down'
+  | 'scroll_up'
+  | 'scroll_down'
+  | 'swipe_left'
+  | 'swipe_right'
+  | 'return'
+  | 'none';
 
 export interface GestureResult {
   gesture: Gesture;
@@ -14,171 +25,206 @@ interface Keypoint {
   score?: number;
 }
 
-// Simplified thresholds for more reliable detection
-const FINGER_CURVED_THRESHOLD = 60;    // More lenient curve detection
-const FINGER_EXTENDED_THRESHOLD = 140;  // More lenient extension detection
-const GESTURE_COOLDOWN = 500;          // Reduced cooldown for faster response
-const SWIPE_THRESHOLD = 100;          // Minimum distance for swipe detection
-const SWIPE_TIME_WINDOW = 500;        // Maximum time window for swipe detection in ms
+const THRESHOLDS = {
+  FINGER_CURVED: 60,
+  FINGER_EXTENDED: 140,
+  THUMB_EXTENDED: 120,
+  GESTURE_COOLDOWN: 300,  // Reduced cooldown time
+  SCROLL_DISTANCE: 0.15,
+  SWIPE_THRESHOLD: 30,    // Lowered swipe threshold
+};
 
-// Track hand movement
-let lastHandPosition: { x: number; y: number; timestamp: number } | null = null;
+// Track previous hand position for swipe detection
+let prevPalmPosition: { x: number, y: number } | null = null;
 let lastGestureTime = 0;
+let lastHandDirection = { x: 0, y: 0 };
+let lastGesture: Gesture = 'none';
+let swipeStartPosition: { x: number, y: number } | null = null;
 
-// Simplified angle calculation
 const calculateAngle = (p1: Keypoint, p2: Keypoint, p3: Keypoint): number => {
-  const radians = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+  const radians =
+    Math.atan2(p3.y - p2.y, p3.x - p2.x) -
+    Math.atan2(p1.y - p2.y, p1.x - p2.x);
   let angle = Math.abs((radians * 180) / Math.PI);
-  if (angle > 180) angle = 360 - angle;
-  return angle;
+  return angle > 180 ? 360 - angle : angle;
 };
 
-// Simplified finger state checks
-const isFingerExtended = (keypoints: Keypoint[], mcpIndex: number, pipIndex: number, tipIndex: number): boolean => {
-  const angle = calculateAngle(keypoints[mcpIndex], keypoints[pipIndex], keypoints[tipIndex]);
-  return angle > FINGER_EXTENDED_THRESHOLD;
+const isFingerExtended = (
+  keypoints: Keypoint[],
+  mcp: number,
+  pip: number,
+  tip: number
+): boolean => calculateAngle(keypoints[mcp], keypoints[pip], keypoints[tip]) > THRESHOLDS.FINGER_EXTENDED;
+
+const isFingerCurved = (
+  keypoints: Keypoint[],
+  mcp: number,
+  pip: number,
+  tip: number
+): boolean => calculateAngle(keypoints[mcp], keypoints[pip], keypoints[tip]) < THRESHOLDS.FINGER_CURVED;
+
+const isThumbExtended = (keypoints: Keypoint[]): boolean => {
+  // Check thumb angle (CMC-MCP-TIP)
+  const angle = calculateAngle(keypoints[1], keypoints[2], keypoints[4]);
+  return angle > THRESHOLDS.THUMB_EXTENDED;
 };
 
-const isFingerCurved = (keypoints: Keypoint[], mcpIndex: number, pipIndex: number, tipIndex: number): boolean => {
-  const angle = calculateAngle(keypoints[mcpIndex], keypoints[pipIndex], keypoints[tipIndex]);
-  return angle < FINGER_CURVED_THRESHOLD;
+const getFingerDirection = (keypoints: Keypoint[], fingerTip: number, fingerBase: number): 'up' | 'down' => {
+  return keypoints[fingerTip].y > keypoints[fingerBase].y ? 'down' : 'up';
 };
 
-
-// Calculate hand center position
-const getHandCenter = (keypoints: Keypoint[]): { x: number; y: number } => {
-  const sum = keypoints.reduce((acc, point) => ({
-    x: acc.x + point.x,
-    y: acc.y + point.y
-  }), { x: 0, y: 0 });
+// Calculate palm center position
+const getPalmPosition = (keypoints: Keypoint[]): { x: number, y: number } => {
+  // Use wrist and base of fingers to calculate palm center
+  const wrist = keypoints[0];
+  const indexBase = keypoints[5];
+  const pinkyBase = keypoints[17];
   
   return {
-    x: sum.x / keypoints.length,
-    y: sum.y / keypoints.length
+    x: (wrist.x + indexBase.x + pinkyBase.x) / 3,
+    y: (wrist.y + indexBase.y + pinkyBase.y) / 3,
   };
 };
 
-// Detect swipe movement
-const detectSwipe = (currentPosition: { x: number; y: number }, currentTime: number): Gesture => {
-  if (!lastHandPosition) {
-    lastHandPosition = { ...currentPosition, timestamp: currentTime };
-    return 'none';
-  }
-
-  // Check if the movement is within the time window
-  if (currentTime - lastHandPosition.timestamp > SWIPE_TIME_WINDOW) {
-    lastHandPosition = { ...currentPosition, timestamp: currentTime };
-    return 'none';
-  }
-
-  const deltaX = currentPosition.x - lastHandPosition.x;
-  const deltaTime = currentTime - lastHandPosition.timestamp;
-  const velocity = Math.abs(deltaX) / deltaTime;
-
-  // Update last position
-  lastHandPosition = { ...currentPosition, timestamp: currentTime };
-
-  // Check if movement exceeds threshold and has sufficient velocity
-  if (Math.abs(deltaX) > SWIPE_THRESHOLD && velocity > 0.5) {
-    return deltaX > 0 ? 'swipe_right' : 'swipe_left';
-  }
-
-  return 'none';
+// Check if all fingers are pointing downward
+const areAllFingersDown = (keypoints: Keypoint[]): boolean => {
+  return keypoints[8].y > keypoints[5].y && 
+         keypoints[12].y > keypoints[9].y &&
+         keypoints[16].y > keypoints[13].y &&
+         keypoints[20].y > keypoints[17].y;
 };
 
 export const detectGesture = (hands: Hand[]): GestureResult => {
-  if (!hands || hands.length === 0 || hands[0].score < 0.8) {
+  if (!hands.length || hands[0].score < 0.8) {
+    prevPalmPosition = null;
+    swipeStartPosition = null;
     return { gesture: 'none', confidence: 0 };
   }
 
-  const hand = hands[0];
-  const keypoints = hand.keypoints;
+  const { keypoints, score } = hands[0];
   const currentTime = Date.now();
+  
+  // Calculate current palm position
+  const palmPosition = getPalmPosition(keypoints);
+  
+  // Get finger states
+  const [isIndex, isMiddle, isRing, isPinky] = [
+    isFingerExtended(keypoints, 5, 6, 8),
+    isFingerExtended(keypoints, 9, 10, 12),
+    isFingerExtended(keypoints, 13, 14, 16),
+    isFingerExtended(keypoints, 17, 18, 20),
+  ];
+  const isThumb = isThumbExtended(keypoints);
 
-  // Skip gesture detection during cooldown
-  if (currentTime - lastGestureTime < GESTURE_COOLDOWN) {
-    return { gesture: 'none', confidence: hand.score };
-  }
-
-  // Check finger states
-  const isIndexExtended = isFingerExtended(keypoints, 5, 6, 8);
-  const isMiddleExtended = isFingerExtended(keypoints, 9, 10, 12);
-  const isRingExtended = isFingerExtended(keypoints, 13, 14, 16);
-  const isPinkyExtended = isFingerExtended(keypoints, 17, 18, 20);
-
-  // Detect gestures based on simplified patterns:
-
-  // Get current hand position
-  const handCenter = getHandCenter(keypoints);
-
-
-  // Check for swipe gestures when fingers are extended
-  if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended) {
-    const swipeGesture = detectSwipe(handCenter, currentTime);
-    if (swipeGesture !== 'none') {
-      lastGestureTime = currentTime;
-      return { gesture: swipeGesture, confidence: hand.score };
+  // Detect open hand position (for swipes and scrolls)
+  const isOpenHand = isIndex && isMiddle && isRing && isPinky;
+  
+  // Handle swipe detection
+  let swipeGesture: Gesture = 'none';
+  
+  if (prevPalmPosition && isOpenHand) {
+    const deltaX = palmPosition.x - prevPalmPosition.x;
+    const deltaY = palmPosition.y - prevPalmPosition.y;
+    
+    // Store hand movement direction
+    lastHandDirection = { x: deltaX, y: deltaY };
+    
+    // Initialize swipe start position if needed
+    if (!swipeStartPosition && Math.abs(deltaX) > 5) {
+      swipeStartPosition = { ...prevPalmPosition };
     }
-  }
-
-  // 1. Tap: Only index finger extended
-  if (isIndexExtended && !isMiddleExtended && !isRingExtended && !isPinkyExtended) {
-    lastGestureTime = currentTime;
-    return { gesture: 'tap', confidence: hand.score };
-  }
-
-  // 2. Follow Cursor: Index and middle fingers extended (peace sign)
-  if (isIndexExtended && isMiddleExtended && !isRingExtended && !isPinkyExtended) {
-    lastGestureTime = currentTime;
-    return { gesture: 'follow_cursor', confidence: hand.score };
-  }
-
-    // 2. Follow Cursor: Index and middle fingers extended (peace sign)
-    if (isIndexExtended && isMiddleExtended && isRingExtended && !isPinkyExtended) {
-      lastGestureTime = currentTime;
-      return { gesture: 'close_cursor', confidence: hand.score };
+    
+    // Check if we have a start position and sufficient movement
+    if (swipeStartPosition) {
+      const totalDeltaX = palmPosition.x - swipeStartPosition.x;
+      
+      // Check if hand moved enough for a swipe
+      if (Math.abs(totalDeltaX) > THRESHOLDS.SWIPE_THRESHOLD && 
+          Math.abs(totalDeltaX) > Math.abs(deltaY) * 1.5) {
+        swipeGesture = totalDeltaX < 0 ? 'swipe_left' : 'swipe_right';
+        // Reset swipe start position after detecting a swipe
+        swipeStartPosition = null;
+      }
     }
-
-  // 3. Volume Controls: Thumb + Index forms L shape
-  // Volume Up: L shape pointing up
-  if (isIndexExtended && keypoints[4].y < keypoints[8].y) {
-    lastGestureTime = currentTime;
-    return { gesture: 'volume_up', confidence: hand.score };
+  } else {
+    // Reset swipe tracking if hand is not open
+    swipeStartPosition = null;
   }
   
-  // Volume Down: L shape pointing down
-  if (isIndexExtended && keypoints[4].y > keypoints[8].y) {
+  // Update previous position
+  prevPalmPosition = palmPosition;
+  
+  // Special case for continuing a swipe gesture to avoid cooldown interruption
+  if ((lastGesture === 'swipe_left' || lastGesture === 'swipe_right') && 
+      swipeGesture !== 'none' && 
+      currentTime - lastGestureTime < THRESHOLDS.GESTURE_COOLDOWN * 2) {
+    lastGesture = swipeGesture;
     lastGestureTime = currentTime;
-    return { gesture: 'volume_down', confidence: hand.score };
-  }
-
-  // 4. Swipe Detection: All fingers extended, check hand orientation
-  if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended) {
-    // Swipe Left: Palm facing left
-    if (keypoints[0].x > keypoints[5].x) {
-      lastGestureTime = currentTime;
-      return { gesture: 'swipe_left', confidence: hand.score };
-    }
-    // Swipe Right: Palm facing right
-    if (keypoints[0].x < keypoints[5].x) {
-      lastGestureTime = currentTime;
-      return { gesture: 'swipe_right', confidence: hand.score };
-    }
-  }
-
-  // 5. Scroll Controls: Based on closed/open fist
-  // Scroll Up: Closed fist (all fingers curved)
-  if (!isIndexExtended && !isMiddleExtended && !isRingExtended && !isPinkyExtended) {
-    lastGestureTime = currentTime;
-    return { gesture: 'scroll_up', confidence: hand.score };
+    return { gesture: swipeGesture, confidence: score };
   }
   
-  // Scroll Down: Open palm facing down
-  if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended && 
-      keypoints[8].y > keypoints[5].y) {
-    lastGestureTime = currentTime;
-    return { gesture: 'scroll_down', confidence: hand.score };
+  // If we're in cooldown period and not detecting a special case, return the last gesture
+  if (currentTime - lastGestureTime < THRESHOLDS.GESTURE_COOLDOWN) {
+    return { gesture: lastGesture, confidence: score };
   }
 
-  return { gesture: 'none', confidence: hand.score };
+  // Improved scroll detection
+  const isScrollingDown = isOpenHand && areAllFingersDown(keypoints);
+  const isScrollingUp = !isIndex && !isMiddle && !isRing && !isPinky && !isThumb;
+
+  // Gesture conditions in priority order
+  // Note: Swipes take precedence over other gestures
+  const gestures: { condition: boolean; gesture: Gesture }[] = [
+    {
+      condition: swipeGesture === 'swipe_left',
+      gesture: 'swipe_left'
+    },
+    {
+      condition: swipeGesture === 'swipe_right',
+      gesture: 'swipe_right'
+    },
+    { 
+      condition: isScrollingDown,
+      gesture: 'scroll_down' 
+    },
+    { 
+      condition: isScrollingUp,
+      gesture: 'scroll_up' 
+    },
+    { 
+      condition: isThumb && !isIndex && !isMiddle && !isRing && !isPinky,
+      gesture: 'return' 
+    },
+    { 
+      condition: isIndex && !isMiddle && !isRing && !isPinky && !isThumb,
+      gesture: 'tap' 
+    },
+    { 
+      condition: isIndex && isMiddle && !isRing && !isPinky,
+      gesture: 'follow_cursor' 
+    },
+    { 
+      condition: isIndex && isMiddle && isRing && !isPinky,
+      gesture: 'close_cursor' 
+    },
+    { 
+      condition: isIndex && keypoints[4].y < keypoints[8].y,
+      gesture: 'volume_up' 
+    },
+    { 
+      condition: isIndex && keypoints[4].y > keypoints[8].y,
+      gesture: 'volume_down' 
+    },
+  ];
+
+  for (const { condition, gesture } of gestures) {
+    if (condition) {
+      lastGestureTime = currentTime;
+      lastGesture = gesture;
+      return { gesture, confidence: score };
+    }
+  }
+
+  lastGesture = 'none';
+  return { gesture: 'none', confidence: score };
 };

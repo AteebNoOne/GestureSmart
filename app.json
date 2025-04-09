@@ -3,6 +3,7 @@
     "name": "GestureSmart",
     "slug": "gesturesmart",
     "version": "1.0.0",
+    "icon": "./assets/logo-light.png",
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -12,6 +13,22 @@
         {
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera to detect hand gestures.",
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
+        }
+      ],
+      ["@react-native-voice/voice"],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/logo-light.png",
+          "color": "#000000"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FFFFFF"
         }
       ],
       "expo-build-properties"
@@ -24,14 +41,17 @@
         "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "BIND_ACCESSIBILITY_SERVICE",
         "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_CAMERA",
         "WAKE_LOCK",
         "RECEIVE_BOOT_COMPLETED",
         "INTERNET",
         "ACCESS_NETWORK_STATE",
-        "POST_NOTIFICATIONS"
+        "POST_NOTIFICATIONS",
+        "WRITE_SETTINGS"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF"
+        "foregroundImage": "./assets/logo-light.png",
+        "backgroundColor": "#000000"
       }
     },
     "ios": {
