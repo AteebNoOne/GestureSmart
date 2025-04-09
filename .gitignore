@@ -137,3 +137,5 @@ docs/pages/versions/*/react-native/*.diff
 # Pods
 /ios/Pods
 *.mp4
+
+*.zip
