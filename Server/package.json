@@ -1,0 +1,60 @@
+{
+  "name": "gesture-smart-server",
+  "license": "0BSD",
+  "displayName": "Gesture Smart Server",
+  "version": "1.0.0",
+  "description": "Express SErver fopr Gesture Smart App",
+  "main": "app.js",
+  "type": "module",
+  "homepage": "/",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "start": "node app.js",
+    "dev": "nodemon"
+  },
+  "author": "AteebNoOne <ateebnoone@gmail.com>",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cloudinary": "^2.4.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.5.3",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.14",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@jest/globals": "^29.7.0",
+    "babel-jest": "^29.7.0",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AteebNoOne/GestureSmart"
+  },
+  "keywords": [
+    "Gesture",
+    "Smart",
+    "Gesture Smart",
+    "Detection",
+    "Artificial Intelligence",
+    "AI",
+    "nodejs",
+    "express"
+  ],
+  "bugs": {
+    "url": "https://github.com/AteebNoOne/GestureSmart/issues"
+  },
+  "contributors": [
+    {
+      "name": "AteebNoOne",
+      "email": "ateebnoone@gmail.com"
+    }
+  ]
+}
