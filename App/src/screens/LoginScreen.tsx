@@ -22,6 +22,7 @@ import {
   responsiveWidth,
   responsiveFontSize,
 } from 'react-native-responsive-dimensions';
+import userApi from '../api/user';
 
 interface LoginScreenProps {
   navigation: NavigationProp<any>;
@@ -37,6 +38,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
   const { theme, colors } = useTheme();
   const [animatedValue] = useState(new Animated.Value(0));
+
 
   // Determine if using dark theme variant
   const isDarkTheme = theme === 'dark' || theme === 'blue' || theme === 'purple';
@@ -76,22 +78,38 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       email: "",
       password: ""
     });
-    navigation.navigate('MainApp');
-    // try {
-    //   if (email === "ateebnoone" && password === "123123") {
-    //     navigation.navigate('MainApp');
-    //   } else {
-    //     setErrors(prev => ({
-    //       ...prev,
-    //       password: "Invalid email or password"
-    //     }));
-    //   }
-    // } catch (error) {
-    //   setErrors(prev => ({
-    //     ...prev,
-    //     password: "Invalid email or password"
-    //   }));
-    // }
+    if(!email || !password) {
+      setErrors({
+        email: !email ? "Email is required" : "",
+        password: !password ? "Password is required" : ""
+      });
+      return;
+    }
+    try{
+      const cred = {
+        email,
+        password
+      }
+       const response = await userApi.login(cred);
+       console.log(response);
+      if (response.success) {
+        navigation.navigate('MainApp'); 
+      }   
+      else {
+        setErrors({
+          email: "",
+          password: "Invalid email or password"
+        });
+      }   
+    }
+    catch (error) {
+      setErrors({
+        email: "",
+        password: "Invalid email or password"
+      });
+
+    }
+
   };
 
   const handleDetectWithoutLogin = () => {

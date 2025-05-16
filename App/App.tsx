@@ -1,15 +1,15 @@
-import React, { useEffect } from 'react';
-import Navigation from './src/navigation';
-import * as SplashScreen from 'expo-splash-screen';
+import React, { useEffect } from "react";
+import Navigation from "./src/navigation";
+import * as SplashScreen from "expo-splash-screen";
 import {
   useFonts,
   Inter_400Regular,
   Inter_500Medium,
   Inter_600SemiBold,
   Inter_700Bold,
-} from '@expo-google-fonts/inter';
+} from "@expo-google-fonts/inter";
 
-SplashScreen.preventAutoHideAsync(); 
+SplashScreen.preventAutoHideAsync();
 
 const App: React.FC = () => {
   let [fontsLoaded] = useFonts({
@@ -21,12 +21,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (fontsLoaded) {
-      SplashScreen.hideAsync(); 
+      SplashScreen.hideAsync();
     }
   }, [fontsLoaded]);
 
   if (!fontsLoaded) {
-    return null; 
+    return null;
   }
 
   return <Navigation />;
