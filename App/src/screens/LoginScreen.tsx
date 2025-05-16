@@ -14,7 +14,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { typography, spacing, ThemeType } from '../constants/theme';
 import { useTheme } from '../hooks/useTheme';
-import { NavigationProp } from '@react-navigation/native';
+import { NavigationProp, useFocusEffect } from '@react-navigation/native';
 import { ThemeSwitcher } from '../components/ThemeSwitcher';
 import { Input } from '../components/Input';
 import {
@@ -43,6 +43,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   // Determine if using dark theme variant
   const isDarkTheme = theme === 'dark' || theme === 'blue' || theme === 'purple';
 
+  useFocusEffect(
+    React.useCallback(() => {
+      setEmail('');
+      setPassword('');
+      setErrors({
+        email: "",
+        password: ""
+      });
+      return () => {}; // optional cleanup
+    }, [])
+  );
+  
   // Animate hand gesture icon
   useEffect(() => {
     Animated.loop(
