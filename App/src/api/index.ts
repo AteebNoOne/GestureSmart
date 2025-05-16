@@ -1,6 +1,8 @@
 import axios from "axios"
 
-export const API_BASE_URL = "http://192.168.100.2:8000/api/"
+// export const API_BASE_URL = "http://192.168.100.2:8000/api/"
+export const API_BASE_URL = "https://gesturesmart.onrender.com/api/"
+
 
 export const getEmailAvailablity = async () => {
     try {
