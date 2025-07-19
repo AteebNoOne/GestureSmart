@@ -79,7 +79,13 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const isMountedRef = useRef<boolean>(true);
     const gestureSubscriptionRef = useRef<EmitterSubscription | null>(null);
-
+    const [handDetectionStatus, setHandDetectionStatus] = useState({
+        status: 'no_hands',
+        landmarkCount: 0,
+        confidence: 0,
+        lastUpdate: 0,
+        isActive: false
+    });
     // State
     const [volume, setVolume] = useState<number>(0);
     const [currentGesture, setCurrentGesture] = useState<string>("none");
@@ -259,7 +265,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
     useEffect(() => {
         isMountedRef.current = true;
 
-        const initialize = async (): Promise<void> => {
+        const initialize = async () => {
             try {
                 await requestAndroidPermissions();
                 safeSetState((prev) => ({
@@ -271,16 +277,37 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                 // Set up gesture event listener
                 if (Platform.OS === 'android') {
                     const eventEmitter = new NativeEventEmitter(GestureServiceModule);
-                    const subscription = eventEmitter.addListener(
+
+                    // Gesture events
+                    const gestureSubscription = eventEmitter.addListener(
                         GestureServiceModule.EVENT_NAME,
-                        (gesture: string) => {
-                            setCurrentGesture(gesture);
-                            handleGesture(gesture);
+                        (data) => {
+                            console.log('Gesture event received:', data);
+                            setCurrentGesture(data.gesture);
+                            handleGesture(data.gesture);
                         }
                     );
 
-                    // Store the subscription for cleanup
-                    gestureSubscriptionRef.current = subscription;
+                    // Hand detection events
+                    const handDetectionSubscription = eventEmitter.addListener(
+                        GestureServiceModule.HAND_DETECTION_EVENT_NAME,
+                        (data) => {
+                            console.log('Hand detection event:', data);
+                            setHandDetectionStatus({
+                                status: data.status,
+                                landmarkCount: data.landmarkCount,
+                                confidence: data.confidence,
+                                lastUpdate: Date.now(),
+                                isActive: data.status === 'hand_detected'
+                            });
+                        }
+                    );
+
+                    // Store subscriptions for cleanup
+                    gestureSubscriptionRef.current = {
+                        gesture: gestureSubscription,
+                        handDetection: handDetectionSubscription
+                    };
                 }
             } catch (error) {
                 console.error("Initialization failed:", error);
@@ -293,11 +320,33 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         return () => {
             isMountedRef.current = false;
             if (gestureSubscriptionRef.current) {
-                gestureSubscriptionRef.current.remove();
+                if (gestureSubscriptionRef.current.gesture) {
+                    gestureSubscriptionRef.current.gesture.remove();
+                }
+                if (gestureSubscriptionRef.current.handDetection) {
+                    gestureSubscriptionRef.current.handDetection.remove();
+                }
                 gestureSubscriptionRef.current = null;
             }
         };
     }, [requestAndroidPermissions, safeSetState]);
+
+    const getHandDetectionStatusText = useCallback(() => {
+        const timeSinceUpdate = Date.now() - handDetectionStatus.lastUpdate;
+
+        if (timeSinceUpdate > 2000) { // No update for 2 seconds
+            return "No camera feed";
+        }
+
+        switch (handDetectionStatus.status) {
+            case 'hand_detected':
+                return `✋ Hand detected (${handDetectionStatus.landmarkCount} landmarks, ${Math.round(handDetectionStatus.confidence * 100)}% confidence)`;
+            case 'no_hands':
+                return "👀 Camera active, no hands detected";
+            default:
+                return "Camera initializing...";
+        }
+    }, [handDetectionStatus]);
 
     // Enhanced app state handling
     useEffect(() => {
@@ -609,7 +658,106 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             fontWeight: "bold",
             marginLeft: 5,
         },
+        handDetectionContainer: {
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            marginVertical: 10,
+            padding: 15,
+            borderRadius: 8,
+            borderWidth: 2,
+        },
+        handDetectedStyle: {
+            backgroundColor: "#E8F5E8",
+            borderColor: "#4CAF50",
+        },
+        noHandsStyle: {
+            backgroundColor: "#FFF3E0",
+            borderColor: "#FF9800",
+        },
+        noFeedStyle: {
+            backgroundColor: "#FFEBEE",
+            borderColor: "#F44336",
+        },
+        handDetectionText: {
+            fontSize: 14,
+            fontWeight: "600",
+            textAlign: "center",
+            marginLeft: 8,
+        },
+        handDetectedText: {
+            color: "#2E7D32",
+        },
+        noHandsText: {
+            color: "#F57C00",
+        },
+        noFeedText: {
+            color: "#C62828",
+        },
+        debugInfo: {
+            backgroundColor: "#f0f0f0",
+            padding: 10,
+            borderRadius: 5,
+            marginVertical: 10,
+        },
+        debugText: {
+            fontSize: 12,
+            fontFamily: "monospace",
+            color: "#333",
+        },
     });
+
+    const renderHandDetectionStatus = () => {
+        const timeSinceUpdate = Date.now() - handDetectionStatus.lastUpdate;
+        const isStale = timeSinceUpdate > 2000;
+
+        let containerStyle, textStyle, iconName, iconColor;
+
+        if (isStale) {
+            containerStyle = styles.noFeedStyle;
+            textStyle = styles.noFeedText;
+            iconName = "camera-off";
+            iconColor = "#C62828";
+        } else if (handDetectionStatus.isActive) {
+            containerStyle = styles.handDetectedStyle;
+            textStyle = styles.handDetectedText;
+            iconName = "hand-okay";
+            iconColor = "#2E7D32";
+        } else {
+            containerStyle = styles.noHandsStyle;
+            textStyle = styles.noHandsText;
+            iconName = "eye";
+            iconColor = "#F57C00";
+        }
+
+        return (
+            <View style={[styles.handDetectionContainer, containerStyle]}>
+                <MaterialCommunityIcons name={iconName} size={20} color={iconColor} />
+                <Text style={[styles.handDetectionText, textStyle]}>
+                    {getHandDetectionStatusText()}
+                </Text>
+            </View>
+        );
+    };
+
+    const renderDebugInfo = () => {
+        if (!state.isRunning) return null;
+
+        return (
+            <View style={styles.debugInfo}>
+                <Text style={styles.debugText}>
+                    Debug Info:{'\n'}
+                    • Service: {state.status}{'\n'}
+                    • Hand Status: {handDetectionStatus.status}{'\n'}
+                    • Landmarks: {handDetectionStatus.landmarkCount}{'\n'}
+                    • Confidence: {Math.round(handDetectionStatus.confidence * 100)}%{'\n'}
+                    • Last Update: {handDetectionStatus.lastUpdate > 0 ?
+                        `${Date.now() - handDetectionStatus.lastUpdate}ms ago` : 'Never'}{'\n'}
+                    • Current Gesture: {currentGesture}
+                </Text>
+            </View>
+        );
+    };
 
     return (
         <SafeAreaView style={styles.safeArea}>
@@ -638,6 +786,8 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     </View>
                 )}
 
+                {state.isRunning && renderHandDetectionStatus()}
+
                 {state.isBackgroundActive && (
                     <View style={styles.backgroundIndicator}>
                         <MaterialCommunityIcons name="circle" size={12} color="white" />
@@ -653,6 +803,8 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                         Volume: {Math.round(volume * 100)}%
                     </Text>
                 </View>
+
+                {renderDebugInfo()}
 
                 <View style={styles.gestureContainer}>
                     <Text style={styles.gestureText}>
