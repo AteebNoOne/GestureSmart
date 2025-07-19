@@ -49,6 +49,14 @@ public class GestureService extends Service {
     private static final String CHANNEL_ID = "GestureServiceChannel";
     private static final int NOTIFICATION_ID = 1;
 
+    // Gesture detection thresholds (matching TypeScript logic)
+    private static final float FINGER_CURVED_THRESHOLD = 0.15f;
+    private static final float FINGER_EXTENDED_THRESHOLD = -0.15f;
+    private static final float THUMB_EXTENDED_THRESHOLD = -0.15f;
+    private static final long GESTURE_COOLDOWN = 300; // ms
+    private static final float SWIPE_THRESHOLD = 30.0f;
+    private static final float SCROLL_DISTANCE = 0.15f;
+
     private CameraDevice cameraDevice;
     private CameraCaptureSession cameraCaptureSession;
     private ImageReader imageReader;
@@ -57,14 +65,31 @@ public class GestureService extends Service {
     private Hands hands;
     private boolean isProcessing = false;
     private GestureModule gestureModule;
-    private static final long PROCESS_DELAY = 200; // Increased delay to reduce processing load
+    private static final long PROCESS_DELAY = 200;
     private final Handler processHandler = new Handler(Looper.getMainLooper());
     private long lastProcessTime = 0;
+
+    // Gesture tracking variables
+    private PointF prevPalmPosition = null;
+    private long lastGestureTime = 0;
+    private PointF lastHandDirection = new PointF(0, 0);
+    private String lastGesture = "none";
+    private PointF swipeStartPosition = null;
 
     private boolean handsDetected = false;
     private int handLandmarkCount = 0;
     private long lastHandDetectionTime = 0;
     private float handConfidence = 0.0f;
+
+    // Simple Point class for tracking positions
+    private static class PointF {
+        float x, y;
+
+        PointF(float x, float y) {
+            this.x = x;
+            this.y = y;
+        }
+    }
 
     @Override
     public void onCreate() {
@@ -107,18 +132,20 @@ public class GestureService extends Service {
                 .setMaxNumHands(1)
                 .setRunOnGpu(true)
                 .setModelComplexity(1)
-                .setMinDetectionConfidence(0.5f)
-                .setMinTrackingConfidence(0.5f)
+                .setMinDetectionConfidence(0.8f) // Increased to match TypeScript
+                .setMinTrackingConfidence(0.8f)
                 .build();
 
         hands = new Hands(this, options);
         hands.setErrorListener((message, e) -> Log.e(TAG, "MediaPipe Hands error: " + message));
 
-        // Set result listener for hand detection
         hands.setResultListener(result -> {
             if (result != null && !result.multiHandLandmarks().isEmpty()) {
                 detectAndEmitGesture(result);
             } else {
+                // Reset tracking when no hands detected
+                prevPalmPosition = null;
+                swipeStartPosition = null;
                 Log.v(TAG, "No hands detected in current frame");
             }
         });
@@ -142,7 +169,10 @@ public class GestureService extends Service {
                 handLandmarkCount = 0;
                 handConfidence = 0.0f;
 
-                // Send hand detection status to React Native
+                // Reset tracking
+                prevPalmPosition = null;
+                swipeStartPosition = null;
+
                 if (gestureModule != null) {
                     processHandler.post(() -> {
                         gestureModule.sendHandDetectionEvent("no_hands", 0, 0.0f);
@@ -154,15 +184,9 @@ public class GestureService extends Service {
             // Get the first hand landmarks
             NormalizedLandmarkList landmarks = multiHandLandmarks.get(0);
             handLandmarkCount = landmarks.getLandmarkList().size();
-
-            // Calculate confidence (you can get this from MediaPipe if available)
-            // For now, we'll use a simple heuristic based on landmark count
             handConfidence = handLandmarkCount >= 21 ? 0.9f : 0.5f;
 
-            Log.d(TAG, String.format("Hand detected - Landmarks: %d, Confidence: %.2f",
-                    handLandmarkCount, handConfidence));
-
-            // Send hand detection status to React Native
+            // Send hand detection status
             if (gestureModule != null) {
                 processHandler.post(() -> {
                     gestureModule.sendHandDetectionEvent("hand_detected", handLandmarkCount, handConfidence);
@@ -171,19 +195,14 @@ public class GestureService extends Service {
 
             String detectedGesture = classifyGesture(landmarks);
 
-            if (detectedGesture != null) {
+            if (detectedGesture != null && !detectedGesture.equals("none")) {
                 Log.i(TAG, "Detected gesture: " + detectedGesture);
-                // Emit gesture through GestureModule
                 if (gestureModule != null) {
                     processHandler.post(() -> {
                         Log.i(TAG, "Emitting gesture event: " + detectedGesture);
                         gestureModule.sendEvent(detectedGesture);
                     });
-                } else {
-                    Log.e(TAG, "GestureModule is null, cannot emit event");
                 }
-            } else {
-                Log.v(TAG, "No recognizable gesture detected");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error detecting gesture: " + e.getMessage());
@@ -191,77 +210,169 @@ public class GestureService extends Service {
         }
     }
 
+    private String classifyGesture(NormalizedLandmarkList landmarks) {
+        if (landmarks.getLandmarkList().size() < 21) {
+            Log.w(TAG, "Insufficient landmarks for gesture classification: " + landmarks.getLandmarkList().size());
+            return "none";
+        }
+
+        try {
+            List<NormalizedLandmark> points = landmarks.getLandmarkList();
+            long currentTime = System.currentTimeMillis();
+
+            // Calculate palm position (wrist + finger bases average)
+            PointF palmPosition = calculatePalmPosition(points);
+
+            // Get finger states
+            boolean isIndex = isFingerExtended(points, 5, 6, 8);
+            boolean isMiddle = isFingerExtended(points, 9, 10, 12);
+            boolean isRing = isFingerExtended(points, 13, 14, 16);
+            boolean isPinky = isFingerExtended(points, 17, 18, 20);
+            boolean isThumb = isThumbExtended(points);
+
+            // Check for open hand (all fingers extended)
+            boolean isOpenHand = isIndex && isMiddle && isRing && isPinky;
+
+            // Handle swipe detection
+            String swipeGesture = detectSwipe(palmPosition, isOpenHand);
+
+            // Special case for continuing a swipe gesture
+            if ((lastGesture.equals("swipe_left") || lastGesture.equals("swipe_right")) &&
+                    !swipeGesture.equals("none") &&
+                    currentTime - lastGestureTime < GESTURE_COOLDOWN * 2) {
+                lastGesture = swipeGesture;
+                lastGestureTime = currentTime;
+                return swipeGesture;
+            }
+
+            // Cooldown check
+            if (currentTime - lastGestureTime < GESTURE_COOLDOWN) {
+                return lastGesture;
+            }
+
+            // Detect scroll gestures
+            boolean isScrollingDown = isOpenHand && areAllFingersDown(points);
+            boolean isScrollingUp = !isIndex && !isMiddle && !isRing && !isPinky && !isThumb;
+
+            // Gesture detection in priority order (matching TypeScript)
+            String detectedGesture = "none";
+
+            if (!swipeGesture.equals("none")) {
+                detectedGesture = swipeGesture;
+            } else if (isScrollingDown) {
+                detectedGesture = "scroll_down";
+            } else if (isScrollingUp) {
+                detectedGesture = "scroll_up";
+            } else if (isThumb && !isIndex && !isMiddle && !isRing && !isPinky) {
+                detectedGesture = "return";
+            } else if (isIndex && !isMiddle && !isRing && !isPinky && !isThumb) {
+                detectedGesture = "tap";
+            } else if (isIndex && isMiddle && !isRing && !isPinky) {
+                detectedGesture = "follow_cursor";
+            } else if (isIndex && isMiddle && isRing && !isPinky) {
+                detectedGesture = "close_cursor";
+            } else if (isIndex && points.get(4).getY() < points.get(8).getY()) {
+                detectedGesture = "volume_up";
+            } else if (isIndex && points.get(4).getY() > points.get(8).getY()) {
+                detectedGesture = "volume_down";
+            }
+
+            if (!detectedGesture.equals("none")) {
+                lastGestureTime = currentTime;
+                lastGesture = detectedGesture;
+                Log.i(TAG, "🎯 GESTURE DETECTED: " + detectedGesture);
+                return detectedGesture;
+            }
+
+            lastGesture = "none";
+            return "none";
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in gesture classification: " + e.getMessage());
+            return "none";
+        }
+    }
+
+    private PointF calculatePalmPosition(List<NormalizedLandmark> points) {
+        // Use wrist and base of fingers to calculate palm center
+        NormalizedLandmark wrist = points.get(0);
+        NormalizedLandmark indexBase = points.get(5);
+        NormalizedLandmark pinkyBase = points.get(17);
+
+        float x = (wrist.getX() + indexBase.getX() + pinkyBase.getX()) / 3;
+        float y = (wrist.getY() + indexBase.getY() + pinkyBase.getY()) / 3;
+
+        return new PointF(x, y);
+    }
+
+    private boolean isFingerExtended(List<NormalizedLandmark> points, int mcp, int pip, int tip) {
+        // Check if finger tip is significantly above the base (extended)
+        float tipY = points.get(tip).getY();
+        float baseY = points.get(mcp).getY();
+        return (tipY - baseY) < FINGER_EXTENDED_THRESHOLD;
+    }
+
+    private boolean isThumbExtended(List<NormalizedLandmark> points) {
+        // Check thumb extension based on distance from palm
+        float thumbTipY = points.get(4).getY();
+        float thumbBaseY = points.get(2).getY();
+        return (thumbTipY - thumbBaseY) < THUMB_EXTENDED_THRESHOLD;
+    }
+
+    private boolean areAllFingersDown(List<NormalizedLandmark> points) {
+        // Check if all finger tips are below their bases (pointing down)
+        return points.get(8).getY() > points.get(5).getY() && // Index
+                points.get(12).getY() > points.get(9).getY() && // Middle
+                points.get(16).getY() > points.get(13).getY() && // Ring
+                points.get(20).getY() > points.get(17).getY(); // Pinky
+    }
+
+    private String detectSwipe(PointF palmPosition, boolean isOpenHand) {
+        String swipeGesture = "none";
+
+        if (prevPalmPosition != null && isOpenHand) {
+            float deltaX = palmPosition.x - prevPalmPosition.x;
+            float deltaY = palmPosition.y - prevPalmPosition.y;
+
+            // Store hand movement direction
+            lastHandDirection.x = deltaX;
+            lastHandDirection.y = deltaY;
+
+            // Initialize swipe start position if significant horizontal movement
+            if (swipeStartPosition == null && Math.abs(deltaX) > 0.005f) {
+                swipeStartPosition = new PointF(prevPalmPosition.x, prevPalmPosition.y);
+            }
+
+            // Check for swipe completion
+            if (swipeStartPosition != null) {
+                float totalDeltaX = palmPosition.x - swipeStartPosition.x;
+                float totalDeltaY = Math.abs(palmPosition.y - swipeStartPosition.y);
+
+                // Convert to screen coordinates approximation for threshold comparison
+                float screenDeltaX = Math.abs(totalDeltaX * 1000); // Rough conversion
+
+                // Check if movement is primarily horizontal and exceeds threshold
+                if (screenDeltaX > SWIPE_THRESHOLD &&
+                        Math.abs(totalDeltaX) > totalDeltaY * 1.5) {
+                    swipeGesture = totalDeltaX < 0 ? "swipe_left" : "swipe_right";
+                    swipeStartPosition = null; // Reset after detection
+                }
+            }
+        } else if (!isOpenHand) {
+            // Reset swipe tracking if hand is not open
+            swipeStartPosition = null;
+        }
+
+        // Update previous position
+        prevPalmPosition = new PointF(palmPosition.x, palmPosition.y);
+
+        return swipeGesture;
+    }
+
     public String getHandDetectionInfo() {
         long timeSinceLastDetection = System.currentTimeMillis() - lastHandDetectionTime;
         return String.format("Hands: %s, Landmarks: %d, Confidence: %.2f, Last seen: %dms ago",
                 handsDetected ? "YES" : "NO", handLandmarkCount, handConfidence, timeSinceLastDetection);
-    }
-
-    private String classifyGesture(NormalizedLandmarkList landmarks) {
-        if (landmarks.getLandmarkList().size() < 21) {
-            Log.w(TAG, "Insufficient landmarks for gesture classification: " + landmarks.getLandmarkList().size());
-            return null;
-        }
-
-        try {
-            // Get key points for gesture recognition
-            NormalizedLandmark thumb = landmarks.getLandmark(4);
-            NormalizedLandmark index = landmarks.getLandmark(8);
-            NormalizedLandmark middle = landmarks.getLandmark(12);
-            NormalizedLandmark ring = landmarks.getLandmark(16);
-            NormalizedLandmark pinky = landmarks.getLandmark(20);
-            NormalizedLandmark wrist = landmarks.getLandmark(0);
-
-            // Calculate vertical positions relative to wrist
-            float thumbHeight = thumb.getY() - wrist.getY();
-            float indexHeight = index.getY() - wrist.getY();
-            float middleHeight = middle.getY() - wrist.getY();
-            float ringHeight = ring.getY() - wrist.getY();
-            float pinkyHeight = pinky.getY() - wrist.getY();
-
-            Log.d(TAG,
-                    String.format(
-                            "✋ HAND DETECTED - Finger positions - Index: %.3f, Middle: %.3f, Thumb: %.3f, Ring: %.3f, Pinky: %.3f",
-                            indexHeight, middleHeight, thumbHeight, ringHeight, pinkyHeight));
-
-            // Detect volume up gesture (index finger up, others down)
-            if (indexHeight < -0.15f && thumbHeight > 0 && middleHeight > 0 && ringHeight > 0 && pinkyHeight > 0) {
-                Log.i(TAG, "🔊 GESTURE DETECTED: Volume Up");
-                return "volume_up";
-            }
-
-            // Detect volume down gesture (index and middle fingers up, others down)
-            if (indexHeight < -0.15f && middleHeight < -0.15f && thumbHeight > 0 && ringHeight > 0 && pinkyHeight > 0) {
-                Log.i(TAG, "🔉 GESTURE DETECTED: Volume Down");
-                return "volume_down";
-            }
-
-            // Detect tap gesture (closed fist)
-            if (indexHeight > 0 && middleHeight > 0 && ringHeight > 0 && pinkyHeight > 0 && thumbHeight > -0.1f) {
-                Log.i(TAG, "👊 GESTURE DETECTED: Tap (Closed Fist)");
-                return "tap";
-            }
-
-            // Detect peace/victory sign (index and middle up, others down)
-            if (indexHeight < -0.15f && middleHeight < -0.15f && thumbHeight > -0.05f && ringHeight > 0
-                    && pinkyHeight > 0) {
-                Log.i(TAG, "✌️ GESTURE DETECTED: Peace/Victory");
-                return "peace";
-            }
-
-            // Detect thumbs up
-            if (thumbHeight < -0.15f && indexHeight > 0 && middleHeight > 0 && ringHeight > 0 && pinkyHeight > 0) {
-                Log.i(TAG, "👍 GESTURE DETECTED: Thumbs Up");
-                return "thumbs_up";
-            }
-
-            Log.d(TAG, "❌ No matching gesture pattern found");
-            return null;
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error in gesture classification: " + e.getMessage());
-            return null;
-        }
     }
 
     // Convert YUV_420_888 Image to Bitmap
@@ -373,8 +484,8 @@ public class GestureService extends Service {
                         // Convert YUV to Bitmap
                         Bitmap bitmap = convertYuvToBitmap(image);
                         if (bitmap != null) {
-                            // CRITICAL FIX: MediaPipe requires timestamp when not in static image mode
-                            long timestampMicros = System.currentTimeMillis() * 1000L; // Convert to microseconds
+                            // MediaPipe requires timestamp when not in static image mode
+                            long timestampMicros = System.currentTimeMillis() * 1000L;
                             hands.send(bitmap, timestampMicros);
                             Log.v(TAG, "Sent bitmap to MediaPipe: " + bitmap.getWidth() + "x" + bitmap.getHeight()
                                     + " with timestamp: " + timestampMicros);

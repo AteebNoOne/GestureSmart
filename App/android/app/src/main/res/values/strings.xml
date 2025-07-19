@@ -2,5 +2,6 @@
   <string name="app_name">GestureSmart</string>
   <string name="expo_splash_screen_resize_mode" translatable="false">contain</string>
   <string name="expo_splash_screen_status_bar_translucent" translatable="false">false</string>
-  <string name="accessibility_service_description">Allows the app to perform gestures for hands-free control</string>
+  <string name="accessibility_service_description">This service allows GestureSmart to perform
+    gestures on your device.</string>
 </resources>

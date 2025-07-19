@@ -21,6 +21,8 @@ import {
 
 } from "react-native";
 import {
+    handleScrollDown,
+    handleScrollUp,
     handleSwipeLeft,
     handleSwipeRight,
     handleTap,
@@ -444,6 +446,12 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     break;
                 case "tap":
                     await handleTap(0, 0);
+                    break;
+                case "scroll_up":
+                    await handleScrollUp();
+                    break;
+                case "scroll_down":
+                    await handleScrollDown();
                     break;
                 case "volume_up":
                     await adjustVolume('up');
