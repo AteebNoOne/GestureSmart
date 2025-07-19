@@ -2,10 +2,9 @@ export interface User {
     firstName: string;
     lastName: string;
     email: string;
-    dateOfBirth: string | Date;
-    age: string | number;
+    dateOfBirth: string;
+    age: string;
     phone: string;
     location: string;
-    createdAt: string | Date;
-    profileImage:string  | null;
+    createdAt: string;
 }

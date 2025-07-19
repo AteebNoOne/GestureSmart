@@ -24,7 +24,6 @@ import {
     responsiveWidth,
     responsiveFontSize,
 } from 'react-native-responsive-dimensions';
-import userApi from '../api/user';
 
 interface SignupScreenProps {
     navigation: NavigationProp<any>;
@@ -195,17 +194,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
         return isValid;
     };
 
-    const handleNext = async() => {
-        if(currentPage === 1){
-           const av = await userApi.checkEmailAvailability(email)
-           if(!av.available){
-            setErrors({
-                ...errors,
-                email: 'Email already exist!'
-            })
-            return
-           }
-        }
+    const handleNext = () => {
         if (validatePage(currentPage)) {
             setCurrentPage(prev => prev + 1);
         }
@@ -218,36 +207,19 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
     const handleSignup = async () => {
         if (validatePage(4)) {
             try {
-                const userData = {
-                    firstName,
-                    lastName,
-                    email,
-                    password,
-                    gender,
-                    dateOfBirth,
-                    phone,
-                    location
-                  };
-                  const response = await userApi.signup(userData);
-                if (response.success) {
-                    console.log("Signup successful:", response);
-                    navigation.navigate('Login');                    
-                }
+                // Handle signup logic here
+                navigation.navigate('Login');
             } catch (error) {
                 console.error("Error signing up:", error);
 
                 if (error instanceof Error) {
-                    // Check if error has a response property (likely an Axios error)
-                    const errWithResponse = error as Error & { response?: { data?: { message?: string } } };
-                    if (errWithResponse.response && errWithResponse.response.data && errWithResponse.response.data.message) {
-                        console.log("Error message:", errWithResponse.response.data.message);
+                    console.log("Error message:", error.response.data.message);
+                    if (error.response.data.message) {
                         setErrors({
                             ...errors,
                             email: 'Email already exist!'
                         })
                         setCurrentPage(1)
-                    } else {
-                        console.log("Error message:", error.message);
                     }
                 } else {
                     console.log("Unknown error:", error);
@@ -586,7 +558,7 @@ export const SignupScreen: React.FC<SignupScreenProps> = ({ navigation }) => {
                                 value={dateOfBirth}
                                 mode="date"
                                 display="default"
-                                onChange={(event: any, selectedDate: React.SetStateAction<Date>) => {
+                                onChange={(event, selectedDate) => {
                                     setShowDatePicker(false);
                                     if (selectedDate) {
                                         setDateOfBirth(selectedDate);

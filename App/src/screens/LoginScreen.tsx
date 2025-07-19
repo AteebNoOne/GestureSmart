@@ -14,7 +14,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { typography, spacing, ThemeType } from '../constants/theme';
 import { useTheme } from '../hooks/useTheme';
-import { NavigationProp, useFocusEffect } from '@react-navigation/native';
+import { NavigationProp } from '@react-navigation/native';
 import { ThemeSwitcher } from '../components/ThemeSwitcher';
 import { Input } from '../components/Input';
 import {
@@ -22,7 +22,6 @@ import {
   responsiveWidth,
   responsiveFontSize,
 } from 'react-native-responsive-dimensions';
-import userApi from '../api/user';
 
 interface LoginScreenProps {
   navigation: NavigationProp<any>;
@@ -39,22 +38,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const { theme, colors } = useTheme();
   const [animatedValue] = useState(new Animated.Value(0));
 
-
   // Determine if using dark theme variant
   const isDarkTheme = theme === 'dark' || theme === 'blue' || theme === 'purple';
 
-  useFocusEffect(
-    React.useCallback(() => {
-      setEmail('');
-      setPassword('');
-      setErrors({
-        email: "",
-        password: ""
-      });
-      return () => {}; // optional cleanup
-    }, [])
-  );
-  
   // Animate hand gesture icon
   useEffect(() => {
     Animated.loop(
@@ -90,38 +76,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       email: "",
       password: ""
     });
-    if(!email || !password) {
-      setErrors({
-        email: !email ? "Email is required" : "",
-        password: !password ? "Password is required" : ""
-      });
-      return;
-    }
-    try{
-      const cred = {
-        email,
-        password
-      }
-       const response = await userApi.login(cred);
-       console.log(response);
-      if (response.success) {
-        navigation.navigate('MainApp'); 
-      }   
-      else {
-        setErrors({
-          email: "",
-          password: "Invalid email or password"
-        });
-      }   
-    }
-    catch (error) {
-      setErrors({
-        email: "",
-        password: "Invalid email or password"
-      });
-
-    }
-
+    navigation.navigate('MainApp');
+    // try {
+    //   if (email === "ateebnoone" && password === "123123") {
+    //     navigation.navigate('MainApp');
+    //   } else {
+    //     setErrors(prev => ({
+    //       ...prev,
+    //       password: "Invalid email or password"
+    //     }));
+    //   }
+    // } catch (error) {
+    //   setErrors(prev => ({
+    //     ...prev,
+    //     password: "Invalid email or password"
+    //   }));
+    // }
   };
 
   const handleDetectWithoutLogin = () => {

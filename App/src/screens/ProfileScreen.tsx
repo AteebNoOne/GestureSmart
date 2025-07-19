@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Platform,
+  Image,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useTheme } from '../hooks/useTheme';
@@ -21,8 +22,6 @@ import {
 import { User } from '../types/User';
 import { formatDate } from '../utils/formatDate';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import userApi from '../api/user';
-import { set } from 'react-native-reanimated';
 
 interface ProfileScreenProps {
   navigation: NavigationProp<any>;
@@ -34,7 +33,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   
   const [isEditing, setIsEditing] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
-
   const [userData, setUserData] = useState<User>({
     firstName: 'User',
     lastName: 'Lastname',
@@ -44,28 +42,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
     phone: '+1 234 567 8900',
     location: 'New York, USA',
     createdAt: new Date('2023-01-01'),
-    profileImage:''
   });
-
-  const getData = async () => {
-   const response = await userApi.getProfile()
-   setUserData({
-      ...userData,
-      firstName: response.user.firstName,
-      lastName: response.user.lastName,
-      email: response.user.email,
-      dateOfBirth: new Date(response.user.dateOfBirth),
-      age: response.user.age,
-      phone: response.user.phone,
-      location: response.user.location,
-      profileImage:response.user.profileImage,
-    });
-  }
-
-
-  useEffect(() => {
-    getData();
-  }, []);
 
   const handleSave = async () => {
     // Here you would typically make an API call to update the user data
@@ -253,7 +230,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
             <Text style={styles.title}>Profile</Text>
           </View>
           
-          {/* <TouchableOpacity
+          <TouchableOpacity
             style={styles.editButton}
             onPress={() => isEditing ? handleSave() : setIsEditing(true)}
           >
@@ -265,7 +242,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
             <Text style={styles.editButtonText}>
               {isEditing ? 'Save' : 'Edit'}
             </Text>
-          </TouchableOpacity> */}
+          </TouchableOpacity>
         </View>
 
         <View style={styles.profileSection}>
@@ -295,14 +272,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
                 type="text"
                 label="First Name"
                 value={userData.firstName}
-                onChangeText={(text:string) => setUserData(prev => ({ ...prev, firstName: text }))}
+                onChangeText={(text) => setUserData(prev => ({ ...prev, firstName: text }))}
                 variant="filled"
               />
               <Input
                 type="text"
                 label="Last Name"
                 value={userData.lastName}
-                onChangeText={(text:string) => setUserData(prev => ({ ...prev, lastName: text }))}
+                onChangeText={(text) => setUserData(prev => ({ ...prev, lastName: text }))}
                 variant="filled"
               />
               <TouchableOpacity
@@ -349,21 +326,21 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
                 type="email"
                 label="Email"
                 value={userData.email}
-                onChangeText={(text:string) => setUserData(prev => ({ ...prev, email: text }))}
+                onChangeText={(text) => setUserData(prev => ({ ...prev, email: text }))}
                 variant="filled"
               />
               <Input
                 type="tel"
                 label="Phone"
                 value={userData.phone}
-                onChangeText={(text:string) => setUserData(prev => ({ ...prev, phone: text }))}
+                onChangeText={(text) => setUserData(prev => ({ ...prev, phone: text }))}
                 variant="filled"
               />
               <Input
                 type="text"
                 label="Location"
                 value={userData.location}
-                onChangeText={(text:string) => setUserData(prev => ({ ...prev, location: text }))}
+                onChangeText={(text) => setUserData(prev => ({ ...prev, location: text }))}
                 variant="filled"
               />
             </>

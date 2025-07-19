@@ -1,20 +1,23 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   StyleSheet,
   View,
   Text,
   TouchableOpacity,
   AppState,
+  AppStateStatus,
   Platform,
   Animated,
   SafeAreaView,
   ActivityIndicator,
   Image,
   NativeModules,
-  Dimensions,
+  PermissionsAndroid,
+  Alert,
+  Linking,
+  ImageRequireSource,
 } from "react-native";
 import { Camera, CameraType } from "expo-camera";
-import { ExpoWebGLRenderingContext } from "expo-gl";
 import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
 import * as tf from "@tensorflow/tfjs";
 import "@tensorflow/tfjs-react-native";
@@ -36,8 +39,9 @@ import { typography } from "../constants/theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { NavigationProp } from "@react-navigation/native";
 import SystemSetting from "react-native-system-setting";
+import BackgroundService from 'react-native-background-actions';
+import * as Notifications from 'expo-notifications';
 
-const { PipModule } = NativeModules;
 const TensorCamera = cameraWithTensors(Camera);
 
 // Constants
@@ -46,41 +50,108 @@ const OUTPUT_TENSOR_HEIGHT = 160;
 const VOLUME_ADJUSTMENT_THROTTLE = 500;
 const CAMERA_PREVIEW_SIZE = 1;
 
+// Types
 interface GestureConfig {
-  [key: string]: {
-    label: string;
-    imagePath: any;
-  };
+  label: string;
+  imagePath: ImageRequireSource;
+}
+
+interface GestureConfigs {
+  [key: string]: GestureConfig;
 }
 
 interface GestureScreenProps {
   navigation: NavigationProp<any>;
 }
 
+interface AppState {
+  isRunning: boolean;
+  isInitialized: boolean;
+  isBackgroundActive: boolean;
+  status: "initializing" | "stopped" | "running" | "background" | "error";
+}
+
+interface NativeGestureService {
+  startService: () => Promise<void>;
+  stopService: () => Promise<void>;
+  isServiceRunning: () => Promise<boolean>;
+  sendGestureData: (data: string) => Promise<void>;
+}
+
+// Configure notifications for background mode
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: false,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
+
+// Background task options
+const backgroundOptions = {
+  taskName: 'GestureDetection',
+  taskTitle: 'Gesture Detection Service',
+  taskDesc: 'Background gesture detection is active',
+  taskIcon: {
+    name: 'ic_launcher',
+    type: 'mipmap',
+  },
+  color: '#4CAF50',
+  linkingURI: 'gesturesmart://gesture', // Deep linking URI
+  parameters: {
+    delay: 1000,
+  },
+};
+
+// The background task that will run continuously
+const backgroundTask = async (taskData?: { delay: number }) => {
+  await new Promise(async (resolve) => {
+    // Loop until stopped
+    while (BackgroundService.isRunning()) {
+      try {
+        console.log('Background service running');
+        // Keep the service alive with notifications
+        await BackgroundService.updateNotification({
+          taskDesc: 'Actively detecting gestures',
+        });
+        await new Promise(r => setTimeout(r, taskData?.delay || 1000));
+      } catch (error) {
+        console.error('Background task error:', error);
+      }
+    }
+  });
+};
+
 const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
   // Refs
-  const appState = useRef(AppState.currentState);
-  const cameraRef = useRef<Camera>();
+  const appState = useRef<AppStateStatus>(AppState.currentState);
+  const cameraRef = useRef<Camera>(null);
   const processingRef = useRef<boolean>(false);
   const keepAwakeRef = useRef<boolean>(false);
   const detectorRef = useRef<handPoseDetection.HandDetector | null>(null);
-  const lastAdjustmentTime = useRef(0);
+  const lastAdjustmentTime = useRef<number>(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const backgroundProcessingRef = useRef<boolean>(false);
+  const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+  const backgroundTaskRef = useRef<string | null>(null);
+  const nativeServiceRef = useRef<NativeGestureService | null>(null);
 
   // State
-  const [isPipMode, setIsPipMode] = useState(false);
-  const [volume, setVolume] = useState(0);
+  const [volume, setVolume] = useState<number>(0);
   const [currentGesture, setCurrentGesture] = useState<string>("none");
-  const [state, setState] = useState({
+  const [backgroundPermissionGranted, setBackgroundPermissionGranted] = useState<boolean>(false);
+  const [state, setState] = useState<AppState>({
     isRunning: false,
     isInitialized: false,
-    status: "initializing" as "initializing" | "stopped" | "running" | "error",
+    isBackgroundActive: false,
+    status: "initializing",
   });
 
   const { colors } = useTheme();
 
   // Gesture configurations
-  const gestureConfigs: GestureConfig = {
+  const gestureConfigs: GestureConfigs = {
     return: {
       label: "Return",
       imagePath: require("../assets/gestures/return.png"),
@@ -123,33 +194,174 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
     },
   };
 
-  // Initialize TensorFlow and handle permissions
-  useEffect(() => {
-    let mounted = true;
+  // Safe state update helper
+  const safeSetState = useCallback((updater: (prev: AppState) => AppState) => {
+    if (isMountedRef.current) {
+      setState(updater);
+    }
+  }, []);
 
-    const initialize = async () => {
+  // Request comprehensive Android permissions
+  const requestAndroidPermissions = useCallback(async (): Promise<void> => {
+    try {
+      if (Platform.OS === 'android') {
+        const permissions: string[] = [
+          'android.permission.CAMERA',
+          'android.permission.WAKE_LOCK',
+          'android.permission.RECORD_AUDIO',
+          'android.permission.MODIFY_AUDIO_SETTINGS',
+        ];
+
+        // Add version-specific permissions
+        if (Platform.Version >= 28) {
+          permissions.push('android.permission.FOREGROUND_SERVICE');
+        }
+
+        if (Platform.Version >= 34) {
+          permissions.push('android.permission.FOREGROUND_SERVICE_CAMERA');
+        }
+
+        const results = await PermissionsAndroid.requestMultiple(permissions);
+        console.log("RESULT:", results)
+        const allGranted = Object.values(results).every(
+          result => result === PermissionsAndroid.RESULTS.GRANTED
+        );
+
+        if (allGranted) {
+          await requestNotificationPermission();
+          await requestOverlayPermission();
+          await requestBatteryOptimizationDisable();
+          setBackgroundPermissionGranted(true);
+        } else {
+          Alert.alert(
+            'Permissions Required',
+            'Background gesture detection requires all permissions to function properly.',
+            [{ text: 'OK' }]
+          );
+        }
+      } else {
+        // iOS permissions
+        await requestNotificationPermission();
+        setBackgroundPermissionGranted(true);
+      }
+    } catch (error) {
+      console.error('Permission request failed:', error);
+    }
+  }, []);
+
+  // Request notification permission
+  const requestNotificationPermission = useCallback(async (): Promise<void> => {
+    try {
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Notification Permission',
+          'Notifications are needed to show background activity status.',
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (error) {
+      console.error('Notification permission request failed:', error);
+    }
+  }, []);
+
+  // Handle overlay permission
+  const requestOverlayPermission = useCallback(async (): Promise<void> => {
+    try {
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.check(
+          'android.permission.SYSTEM_ALERT_WINDOW'
+        );
+
+        if (!granted) {
+          Alert.alert(
+            'Overlay Permission Required',
+            'This app needs permission to display over other apps for gesture detection.',
+            [
+              {
+                text: 'Grant Permission',
+                onPress: () => Linking.openSettings(),
+              },
+              { text: 'Cancel', style: 'cancel' },
+            ]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Overlay permission request failed:', error);
+    }
+  }, []);
+
+  // Request battery optimization disable
+  const requestBatteryOptimizationDisable = useCallback(async (): Promise<void> => {
+    try {
+      if (Platform.OS === 'android' && Platform.Version >= 23) {
+        Alert.alert(
+          'Battery Optimization',
+          'To ensure background gesture detection works properly, please disable battery optimization for this app.',
+          [
+            {
+              text: 'Settings',
+              onPress: () => Linking.openSettings(),
+            },
+            { text: 'Later', style: 'cancel' },
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Battery optimization request failed:', error);
+    }
+  }, []);
+
+  // Initialize native service reference
+  const initializeNativeService = useCallback(async (): Promise<void> => {
+    try {
+      if (Platform.OS === 'android' && NativeModules.GestureService) {
+        nativeServiceRef.current = NativeModules.GestureService as NativeGestureService;
+      }
+    } catch (error) {
+      console.error('Native service initialization failed:', error);
+    }
+  }, []);
+
+  // Clean up processing resources
+  const cleanupProcessing = useCallback((): void => {
+    if (processingTimeoutRef.current) {
+      clearTimeout(processingTimeoutRef.current);
+      processingTimeoutRef.current = null;
+    }
+    processingRef.current = false;
+    backgroundProcessingRef.current = false;
+  }, []);
+
+  // Initialize TensorFlow and setup
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    const initialize = async (): Promise<void> => {
       try {
+        await requestAndroidPermissions();
+
         const { status } = await Camera.requestCameraPermissionsAsync();
-        if (status !== "granted") throw new Error("Camera permission required");
+        if (status !== "granted") {
+          throw new Error("Camera permission required");
+        }
 
         await tf.ready();
         await tf.setBackend("rn-webgl");
 
-        // Optimize for mobile
+        // Optimize TensorFlow for mobile
         tf.env().set("WEBGL_PACK", false);
         tf.env().set("WEBGL_FORCE_F16_TEXTURES", false);
         tf.env().set("WEBGL_FLUSH_THRESHOLD", 1);
-
-        // Add this before tf.ready()
         tf.env().set("WEBGL_CPU_FORWARD", false);
         tf.env().set("WEBGL_EXP_CONV", true);
         tf.env().set("WEBGL_USE_SHAPES_UNIFORMS", true);
 
         const model = handPoseDetection.SupportedModels.MediaPipeHands;
-        const detectorConfig = {
-          runtime: "tfjs" as const,
-          modelType: "lite" as const,
-          maxHands: 1,
+        const detectorConfig: handPoseDetection.MediaPipeHandsTfjsModelConfig = {
+          runtime: "tfjs",
+          maxHands: 1
         };
 
         detectorRef.current = await handPoseDetection.createDetector(
@@ -157,59 +369,90 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
           detectorConfig
         );
 
-        if (mounted) {
-          setState((prev) => ({
-            ...prev,
-            isInitialized: true,
-            status: "stopped",
-          }));
-        }
+        await initializeNativeService();
+
+        safeSetState((prev) => ({
+          ...prev,
+          isInitialized: true,
+          status: "stopped",
+        }));
       } catch (error) {
         console.error("Initialization failed:", error);
-        if (mounted) {
-          setState((prev) => ({ ...prev, status: "error" }));
-        }
+        safeSetState((prev) => ({ ...prev, status: "error" }));
       }
     };
 
     initialize();
+
     return () => {
-      mounted = false;
+      isMountedRef.current = false;
+      cleanupProcessing();
       safeDeactivateKeepAwake();
     };
-  }, []);
+  }, [requestAndroidPermissions, initializeNativeService, safeSetState, cleanupProcessing]);
 
-  // Handle PiP state changes
+  // Enhanced app state handling
   useEffect(() => {
-    const subscription = AppState.addEventListener(
-      "change",
-      (nextAppState: AppState) => {
-        if (appState.current === "active" && nextAppState === "background") {
-          if (isPipMode && state.isRunning) {
-            processingRef.current = true;
-          } else {
-            processingRef.current = false;
+    const handleAppStateChange = async (nextAppState: AppStateStatus): Promise<void> => {
+      console.log('App state changed:', appState.current, '->', nextAppState);
+
+      if (appState.current === 'active' && nextAppState.match(/inactive|background/)) {
+        // App going to background
+        if (processingRef.current) {
+          console.log('App going to background - Starting background processing');
+
+          backgroundProcessingRef.current = true;
+
+          try {
+            await BackgroundService.start(backgroundTask, backgroundOptions);
+          } catch (error) {
+            console.error('Failed to start background service:', error);
           }
-        } else if (nextAppState === "active") {
-          if (state.isRunning) {
-            processingRef.current = true;
-          }
+
+          safeSetState(prev => ({
+            ...prev,
+            isBackgroundActive: true,
+            status: "background"
+          }));
         }
-        appState.current = nextAppState;
+      } else if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+        // App coming to foreground
+        console.log('App coming to foreground');
+
+        backgroundProcessingRef.current = false;
+
+        // Stop background service
+        try {
+          await BackgroundService.stop();
+        } catch (error) {
+          console.error('Failed to stop background service:', error);
+        }
+
+        safeSetState(prev => ({
+          ...prev,
+          isBackgroundActive: false,
+          status: prev.isRunning ? "running" : "stopped"
+        }));
       }
-    );
+
+      appState.current = nextAppState;
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
 
     return () => {
-      subscription.remove();
+      subscription?.remove();
     };
-  }, [isPipMode, state.isRunning]);
+  }, [safeSetState]);
 
   // Initialize volume
   useEffect(() => {
-    SystemSetting.getVolume().then(setVolume);
+    SystemSetting.getVolume()
+      .then(setVolume)
+      .catch(console.error);
   }, []);
 
-  // Gesture animation effect
+  // Gesture animation
   useEffect(() => {
     if (currentGesture && currentGesture !== "none") {
       Animated.sequence([
@@ -227,29 +470,37 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
     }
   }, [currentGesture, fadeAnim]);
 
-  const adjustVolume = async () => {
+  // Volume adjustment
+  const adjustVolume = useCallback(async (direction: 'up' | 'down' = 'up'): Promise<void> => {
     const now = Date.now();
     if (now - lastAdjustmentTime.current < VOLUME_ADJUSTMENT_THROTTLE) return;
 
     lastAdjustmentTime.current = now;
     try {
-      const newVolume = Math.min(1, volume + 0.05);
+      const adjustment = direction === 'up' ? 0.05 : -0.05;
+      const newVolume = Math.max(0, Math.min(1, volume + adjustment));
+
       if (newVolume !== volume) {
         await SystemSetting.setVolume(newVolume, {
           type: "music",
           playSound: false,
-          showUI: true,
+          showUI: !backgroundProcessingRef.current,
         });
         setVolume(newVolume);
       }
     } catch (error) {
       console.error("Volume adjustment failed:", error);
     }
-  };
+  }, [volume]);
 
-  const handleCameraStream = async (images: IterableIterator<tf.Tensor3D>) => {
-    const processFrame = async () => {
-      if (!processingRef.current || !detectorRef.current) return;
+  // Enhanced camera stream handler
+  const handleCameraStream = useCallback(async (
+    images: IterableIterator<tf.Tensor3D>
+  ): Promise<void> => {
+    const processFrame = async (): Promise<void> => {
+      if (!processingRef.current || !detectorRef.current || !isMountedRef.current) {
+        return;
+      }
 
       try {
         tf.disposeVariables();
@@ -264,93 +515,217 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
           const gestureResult = detectGesture(hands);
           console.log("Detected gesture:", gestureResult.gesture);
 
-          setCurrentGesture(gestureResult.gesture);
+          if (isMountedRef.current) {
+            setCurrentGesture(gestureResult.gesture);
+            await handleGesture(gestureResult.gesture);
+          }
 
-          // if (gestureResult.gesture === 'follow_cursor') {
-          //   await adjustVolume();
-          // }
-
-          // handleGesture(gestureResult.gesture);
+          // Send gesture data to native service for background processing
+          if (backgroundProcessingRef.current && nativeServiceRef.current) {
+            try {
+              await nativeServiceRef.current.sendGestureData(
+                JSON.stringify({
+                  gesture: gestureResult.gesture,
+                  timestamp: Date.now(),
+                  confidence: gestureResult.confidence || 0,
+                })
+              );
+            } catch (error) {
+              console.error('Failed to send gesture data to native service:', error);
+            }
+          }
         }
 
         tf.dispose(imageTensor);
-
-        if (processingRef.current) {
-          requestAnimationFrame(processFrame);
-        }
       } catch (error) {
         console.error("Frame processing error:", error);
-        if (processingRef.current) {
-          requestAnimationFrame(processFrame);
-        }
       } finally {
         tf.engine().endScope();
+      }
+
+      // Continue processing
+      if (processingRef.current && isMountedRef.current) {
+        // Always process frames, whether in background or not
+        processingTimeoutRef.current = setTimeout(() => {
+          requestAnimationFrame(processFrame);
+        }, 50); // Keep consistent timing
       }
     };
 
     if (processingRef.current) {
-      setTimeout(() => requestAnimationFrame(processFrame), 50); // Reduce CPU load
+      requestAnimationFrame(processFrame);
     }
-  };
+  }, []);
 
-  const handleGesture = (gesture: Gesture) => {
-    switch (gesture) {
-      case "follow_cursor":
-        handleSwipeLeft();
-        break;
-      case "close_cursor":
-        handleSwipeRight();
-        break;
-      case "tap":
-        handleTap(0, 0);
-        break;
-    }
-  };
+  // Gesture handler
+  const handleGesture = useCallback(async (gesture: Gesture): Promise<void> => {
+    const isBackground = backgroundProcessingRef.current;
+    console.log(`Gesture detected: ${gesture} (${isBackground ? 'background' : 'foreground'} mode)`);
 
-  const safeActivateKeepAwake = async () => {
-    if (!keepAwakeRef.current) {
-      await activateKeepAwake();
-      keepAwakeRef.current = true;
-    }
-  };
-
-  const safeDeactivateKeepAwake = async () => {
-    if (keepAwakeRef.current) {
-      await deactivateKeepAwake();
-      keepAwakeRef.current = false;
-    }
-  };
-
-  const toggleService = async () => {
     try {
+      // If in background mode, use native service
+      if (isBackground && Platform.OS === 'android' && nativeServiceRef.current) {
+        await nativeServiceRef.current.sendGestureData(
+          JSON.stringify({
+            type: 'gesture',
+            gesture: gesture,
+            timestamp: Date.now()
+          })
+        );
+        return;
+      }
+
+      // Handle gesture in foreground mode
+      switch (gesture) {
+        case "follow_cursor":
+          await handleSwipeLeft();
+          break;
+        case "close_cursor":
+          await handleSwipeRight();
+          break;
+        case "tap":
+          await handleTap(0, 0);
+          break;
+        case "volume_up":
+          await adjustVolume('up');
+          break;
+        case "volume_down":
+          await adjustVolume('down');
+          break;
+        default:
+          break;
+      }
+    } catch (error) {
+      console.error('Error handling gesture:', error);
+    }
+  }, [adjustVolume]);
+
+  // Keep awake management
+  const safeActivateKeepAwake = useCallback(async (): Promise<void> => {
+    if (!keepAwakeRef.current) {
+      try {
+        await activateKeepAwake();
+        keepAwakeRef.current = true;
+      } catch (error) {
+        console.error("Failed to activate keep awake:", error);
+      }
+    }
+  }, []);
+
+  const safeDeactivateKeepAwake = useCallback(async (): Promise<void> => {
+    if (keepAwakeRef.current) {
+      try {
+        await deactivateKeepAwake();
+        keepAwakeRef.current = false;
+      } catch (error) {
+        console.error("Failed to deactivate keep awake:", error);
+      }
+    }
+  }, []);
+
+  // Service toggle
+  const toggleService = useCallback(async (): Promise<void> => {
+    try {
+      if (!backgroundPermissionGranted) {
+        Alert.alert(
+          'Permissions Required',
+          'Please grant all required permissions for background gesture detection.',
+          [
+            { text: 'Grant Permissions', onPress: requestAndroidPermissions },
+            { text: 'Cancel', style: 'cancel' },
+          ]
+        );
+        return;
+      }
+
       if (!state.isRunning) {
         await safeActivateKeepAwake();
         processingRef.current = true;
+
+        // Start native service
+        if (Platform.OS === 'android' && nativeServiceRef.current) {
+          try {
+            await nativeServiceRef.current.startService();
+          } catch (error) {
+            console.error('Failed to start native service:', error);
+          }
+        }
       } else {
         await safeDeactivateKeepAwake();
-        processingRef.current = false;
+        cleanupProcessing();
+
+        // Stop native service
+        if (Platform.OS === 'android' && nativeServiceRef.current) {
+          try {
+            await nativeServiceRef.current.stopService();
+          } catch (error) {
+            console.error('Failed to stop native service:', error);
+          }
+        }
+
+        // Stop background fetch
+        if (backgroundTaskRef.current) {
+          try {
+            await BackgroundService.stop();
+          } catch (error) {
+            console.error('Failed to stop background fetch:', error);
+          }
+        }
       }
 
-      setState((prev) => ({
+      safeSetState((prev) => ({
         ...prev,
         isRunning: !prev.isRunning,
         status: !prev.isRunning ? "running" : "stopped",
+        isBackgroundActive: false,
       }));
     } catch (error) {
       console.error("Service toggle failed:", error);
     }
-  };
+  }, [
+    backgroundPermissionGranted,
+    requestAndroidPermissions,
+    state.isRunning,
+    safeActivateKeepAwake,
+    safeDeactivateKeepAwake,
+    cleanupProcessing,
+    safeSetState,
+  ]);
 
-  const enterPipMode = async () => {
-    if (Platform.OS === "android") {
-      try {
-        await PipModule.enterPipMode();
-        setIsPipMode(true);
-      } catch (error) {
-        console.error("PiP mode failed:", error);
-      }
+  // Status helpers
+  const getStatusText = useCallback((): string => {
+    switch (state.status) {
+      case "background":
+        return "Background Mode Active";
+      case "running":
+        return "Running";
+      case "stopped":
+        return "Stopped";
+      case "initializing":
+        return "Initializing";
+      case "error":
+        return "Error";
+      default:
+        return "Unknown";
     }
-  };
+  }, [state.status]);
+
+  const getStatusColor = useCallback((): string => {
+    switch (state.status) {
+      case "background":
+        return "#FF9800";
+      case "running":
+        return "#4CAF50";
+      case "stopped":
+        return "#666";
+      case "initializing":
+        return "#2196F3";
+      case "error":
+        return "#f44336";
+      default:
+        return "#666";
+    }
+  }, [state.status]);
 
   const styles = StyleSheet.create({
     safeArea: {
@@ -364,8 +739,7 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
     header: {
       flexDirection: "row",
       alignItems: "center",
-      paddingTop:
-        Platform.OS === "ios" ? responsiveHeight(2) : responsiveHeight(4),
+      paddingTop: Platform.OS === "ios" ? responsiveHeight(2) : responsiveHeight(4),
       marginBottom: responsiveHeight(3),
     },
     backButton: {
@@ -393,6 +767,7 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
       fontFamily: typography.fontFamily.medium,
       color: colors.text,
       marginBottom: responsiveHeight(2),
+      textAlign: "center",
     },
     gestureImage: {
       width: responsiveWidth(50),
@@ -416,124 +791,156 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
       fontSize: 18,
       fontWeight: "bold",
     },
-    pipButton: {
-      backgroundColor: colors.primary,
-      padding: responsiveWidth(4),
-      borderRadius: 10,
-      marginLeft: 10,
-    },
     status: {
       marginVertical: 20,
       fontSize: 16,
-      color: "#666",
       textAlign: "center",
+      fontWeight: "bold",
+    },
+    backgroundIndicator: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      marginVertical: 10,
+      padding: 10,
+      backgroundColor: "#FF9800",
+      borderRadius: 5,
+    },
+    backgroundIndicatorText: {
+      color: "white",
+      fontSize: 14,
+      fontWeight: "bold",
+      marginLeft: 5,
     },
     camera: {
       width: CAMERA_PREVIEW_SIZE,
       height: CAMERA_PREVIEW_SIZE,
       opacity: 0,
+      position: 'absolute',
+      bottom: 0,
+      right: 0,
     },
-    pipCamera: {
-      width: Dimensions.get("window").width,
-      height: Dimensions.get("window").height,
-      opacity: 1,
+    permissionContainer: {
+      padding: 20,
+      backgroundColor: "#ffeb3b",
+      borderRadius: 10,
+      marginVertical: 10,
+    },
+    permissionText: {
+      fontSize: 14,
+      color: "#333",
+      textAlign: "center",
+    },
+    volumeIndicator: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      marginVertical: 10,
+      padding: 10,
+      backgroundColor: colors.primary,
+      borderRadius: 5,
+    },
+    volumeText: {
+      color: "white",
+      fontSize: 14,
+      fontWeight: "bold",
+      marginLeft: 5,
     },
   });
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        {!isPipMode && (
-          <>
-            <View style={styles.header}>
-              <TouchableOpacity
-                style={styles.backButton}
-                onPress={() => navigation.goBack()}
-              >
-                <MaterialCommunityIcons
-                  name="arrow-left"
-                  size={28}
-                  color={colors.text}
-                />
-              </TouchableOpacity>
-              <View style={styles.headerContent}>
-                <Text style={styles.headerText}>Gesture Detection</Text>
-              </View>
-            </View>
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <MaterialCommunityIcons
+              name="arrow-left"
+              size={28}
+              color={colors.text}
+            />
+          </TouchableOpacity>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerText}>Background Gesture Detection</Text>
+          </View>
+        </View>
 
-            <View style={styles.gestureContainer}>
-              <Text style={styles.gestureText}>
-                {!state.isRunning
-                  ? gestureConfigs[currentGesture]?.label
-                  : "Waiting for gesture..."}
-              </Text>
-
-              {state.isRunning &&
-                currentGesture !== "none" &&
-                gestureConfigs[currentGesture] && (
-                  <Animated.View style={{ opacity: fadeAnim }}>
-                    <Image
-                      source={gestureConfigs[currentGesture].imagePath}
-                      style={styles.gestureImage}
-                    />
-                  </Animated.View>
-                )}
-
-              {state.isRunning &&
-                (!currentGesture || currentGesture === "none") && (
-                  <ActivityIndicator size={100} color={colors.primary} />
-                )}
-            </View>
-
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginBottom: 20,
-              }}
-            >
-              <TouchableOpacity
-                style={[
-                  styles.button,
-                  state.isRunning ? styles.buttonStop : styles.buttonStart,
-                  { flex: 1 },
-                ]}
-                onPress={toggleService}
-                disabled={
-                  !state.isInitialized || state.status === "initializing"
-                }
-              >
-                <Text style={styles.buttonText}>
-                  {state.isRunning
-                    ? "Stop Gesture Service"
-                    : "Start Gesture Service"}
-                </Text>
-              </TouchableOpacity>
-
-              {Platform.OS === "android" && state.isRunning && (
-                <TouchableOpacity
-                  style={[styles.pipButton, { flex: 0.3 }]}
-                  onPress={enterPipMode}
-                >
-                  <Text style={styles.buttonText}>PiP</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {!isPipMode && (
-              <Text style={styles.status}>
-                Status:{" "}
-                {state.status.charAt(0).toUpperCase() + state.status.slice(1)}
-              </Text>
-            )}
-          </>
+        {!backgroundPermissionGranted && (
+          <View style={styles.permissionContainer}>
+            <Text style={styles.permissionText}>
+              Background permissions required for gesture detection when app is not active
+            </Text>
+          </View>
         )}
 
-        {/* Camera component that works in both normal and PiP modes */}
+        {state.isBackgroundActive && (
+          <View style={styles.backgroundIndicator}>
+            <MaterialCommunityIcons name="circle" size={12} color="white" />
+            <Text style={styles.backgroundIndicatorText}>
+              Background mode active - Native service running
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.volumeIndicator}>
+          <MaterialCommunityIcons name="volume-high" size={16} color="white" />
+          <Text style={styles.volumeText}>
+            Volume: {Math.round(volume * 100)}%
+          </Text>
+        </View>
+
+        <View style={styles.gestureContainer}>
+          <Text style={styles.gestureText}>
+            {!state.isRunning
+              ? "Service stopped"
+              : state.isBackgroundActive
+                ? "Background mode: Native service handling gestures"
+                : gestureConfigs[currentGesture]?.label || "Waiting for gesture..."}
+          </Text>
+
+          {state.isRunning &&
+            !state.isBackgroundActive &&
+            currentGesture !== "none" &&
+            gestureConfigs[currentGesture] && (
+              <Animated.View style={{ opacity: fadeAnim }}>
+                <Image
+                  source={gestureConfigs[currentGesture].imagePath}
+                  style={styles.gestureImage}
+                />
+              </Animated.View>
+            )}
+
+          {state.isRunning &&
+            !state.isBackgroundActive &&
+            (!currentGesture || currentGesture === "none") && (
+              <ActivityIndicator size="large" color={colors.primary} />
+            )}
+        </View>
+
+        <TouchableOpacity
+          style={[
+            styles.button,
+            state.isRunning ? styles.buttonStop : styles.buttonStart,
+          ]}
+          onPress={toggleService}
+          disabled={!state.isInitialized || state.status === "initializing"}
+        >
+          <Text style={styles.buttonText}>
+            {state.isRunning ? "Stop Gesture Service" : "Start Gesture Service"}
+          </Text>
+        </TouchableOpacity>
+
+        <Text style={[styles.status, { color: getStatusColor() }]}>
+          Status: {getStatusText()}
+        </Text>
+
+        {/* Keep camera running always when service is active */}
         {state.isRunning && (
           <TensorCamera
             ref={cameraRef}
-            style={isPipMode ? styles.pipCamera : styles.camera}
+            style={styles.camera}
             type={CameraType.front}
             resizeWidth={OUTPUT_TENSOR_WIDTH}
             resizeHeight={OUTPUT_TENSOR_HEIGHT}
@@ -541,7 +948,6 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
             autorender={true}
             onReady={handleCameraStream}
             useCustomShadersToResize={false}
-            // Ensure camera texture dimensions match the tensor dimensions
             cameraTextureWidth={OUTPUT_TENSOR_WIDTH}
             cameraTextureHeight={OUTPUT_TENSOR_HEIGHT}
           />
