@@ -17,18 +17,11 @@ import {
   Linking,
   ImageRequireSource,
 } from "react-native";
-import { Camera, CameraType } from "expo-camera";
-import { activateKeepAwake, deactivateKeepAwake } from "expo-keep-awake";
-import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-react-native";
-import * as handPoseDetection from "@tensorflow-models/hand-pose-detection";
-import { cameraWithTensors } from "@tensorflow/tfjs-react-native";
 import {
   handleSwipeLeft,
   handleSwipeRight,
   handleTap,
 } from "../features/actions";
-import { detectGesture, Gesture } from "../utils/detectGesture";
 import {
   responsiveFontSize,
   responsiveHeight,
@@ -39,16 +32,9 @@ import { typography } from "../constants/theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { NavigationProp } from "@react-navigation/native";
 import SystemSetting from "react-native-system-setting";
-import BackgroundService from 'react-native-background-actions';
-import * as Notifications from 'expo-notifications';
+import * as Notifications from "expo-notifications";
 
-const TensorCamera = cameraWithTensors(Camera);
-
-// Constants
-const OUTPUT_TENSOR_WIDTH = 120;
-const OUTPUT_TENSOR_HEIGHT = 160;
 const VOLUME_ADJUSTMENT_THROTTLE = 500;
-const CAMERA_PREVIEW_SIZE = 1;
 
 // Types
 interface GestureConfig {
@@ -71,12 +57,8 @@ interface AppState {
   status: "initializing" | "stopped" | "running" | "background" | "error";
 }
 
-interface NativeGestureService {
-  startService: () => Promise<void>;
-  stopService: () => Promise<void>;
-  isServiceRunning: () => Promise<boolean>;
-  sendGestureData: (data: string) => Promise<void>;
-}
+// Native module interface
+const GestureServiceModule = NativeModules.GestureService;
 
 // Configure notifications for background mode
 Notifications.setNotificationHandler({
@@ -87,55 +69,12 @@ Notifications.setNotificationHandler({
   }),
 });
 
-// Background task options
-const backgroundOptions = {
-  taskName: 'GestureDetection',
-  taskTitle: 'Gesture Detection Service',
-  taskDesc: 'Background gesture detection is active',
-  taskIcon: {
-    name: 'ic_launcher',
-    type: 'mipmap',
-  },
-  color: '#4CAF50',
-  linkingURI: 'gesturesmart://gesture', // Deep linking URI
-  parameters: {
-    delay: 1000,
-  },
-};
-
-// The background task that will run continuously
-const backgroundTask = async (taskData?: { delay: number }) => {
-  await new Promise(async (resolve) => {
-    // Loop until stopped
-    while (BackgroundService.isRunning()) {
-      try {
-        console.log('Background service running');
-        // Keep the service alive with notifications
-        await BackgroundService.updateNotification({
-          taskDesc: 'Actively detecting gestures',
-        });
-        await new Promise(r => setTimeout(r, taskData?.delay || 1000));
-      } catch (error) {
-        console.error('Background task error:', error);
-      }
-    }
-  });
-};
-
 const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
   // Refs
   const appState = useRef<AppStateStatus>(AppState.currentState);
-  const cameraRef = useRef<Camera>(null);
-  const processingRef = useRef<boolean>(false);
-  const keepAwakeRef = useRef<boolean>(false);
-  const detectorRef = useRef<handPoseDetection.HandDetector | null>(null);
   const lastAdjustmentTime = useRef<number>(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const backgroundProcessingRef = useRef<boolean>(false);
-  const processingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef<boolean>(true);
-  const backgroundTaskRef = useRef<string | null>(null);
-  const nativeServiceRef = useRef<NativeGestureService | null>(null);
 
   // State
   const [volume, setVolume] = useState<number>(0);
@@ -334,43 +273,13 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
     backgroundProcessingRef.current = false;
   }, []);
 
-  // Initialize TensorFlow and setup
+  // Initialize gesture service
   useEffect(() => {
     isMountedRef.current = true;
 
     const initialize = async (): Promise<void> => {
       try {
         await requestAndroidPermissions();
-
-        const { status } = await Camera.requestCameraPermissionsAsync();
-        if (status !== "granted") {
-          throw new Error("Camera permission required");
-        }
-
-        await tf.ready();
-        await tf.setBackend("rn-webgl");
-
-        // Optimize TensorFlow for mobile
-        tf.env().set("WEBGL_PACK", false);
-        tf.env().set("WEBGL_FORCE_F16_TEXTURES", false);
-        tf.env().set("WEBGL_FLUSH_THRESHOLD", 1);
-        tf.env().set("WEBGL_CPU_FORWARD", false);
-        tf.env().set("WEBGL_EXP_CONV", true);
-        tf.env().set("WEBGL_USE_SHAPES_UNIFORMS", true);
-
-        const model = handPoseDetection.SupportedModels.MediaPipeHands;
-        const detectorConfig: handPoseDetection.MediaPipeHandsTfjsModelConfig = {
-          runtime: "tfjs",
-          maxHands: 1
-        };
-
-        detectorRef.current = await handPoseDetection.createDetector(
-          model,
-          detectorConfig
-        );
-
-        await initializeNativeService();
-
         safeSetState((prev) => ({
           ...prev,
           isInitialized: true,
@@ -386,10 +295,8 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
 
     return () => {
       isMountedRef.current = false;
-      cleanupProcessing();
-      safeDeactivateKeepAwake();
     };
-  }, [requestAndroidPermissions, initializeNativeService, safeSetState, cleanupProcessing]);
+  }, [requestAndroidPermissions, safeSetState]);
 
   // Enhanced app state handling
   useEffect(() => {
@@ -639,37 +546,21 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
       }
 
       if (!state.isRunning) {
-        await safeActivateKeepAwake();
-        processingRef.current = true;
-
         // Start native service
-        if (Platform.OS === 'android' && nativeServiceRef.current) {
-          try {
-            await nativeServiceRef.current.startService();
-          } catch (error) {
-            console.error('Failed to start native service:', error);
-          }
+        try {
+          await GestureServiceModule.startService();
+        } catch (error) {
+          console.error('Failed to start native service:', error);
+          return;
         }
       } else {
-        await safeDeactivateKeepAwake();
-        cleanupProcessing();
-
         // Stop native service
-        if (Platform.OS === 'android' && nativeServiceRef.current) {
-          try {
-            await nativeServiceRef.current.stopService();
-          } catch (error) {
-            console.error('Failed to stop native service:', error);
-          }
-        }
-
-        // Stop background fetch
-        if (backgroundTaskRef.current) {
-          try {
-            await BackgroundService.stop();
-          } catch (error) {
-            console.error('Failed to stop background fetch:', error);
-          }
+        try {
+          await GestureServiceModule.stopService();
+          await BackgroundService.stop();
+        } catch (error) {
+          console.error('Failed to stop service:', error);
+          return;
         }
       }
 
@@ -686,9 +577,6 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
     backgroundPermissionGranted,
     requestAndroidPermissions,
     state.isRunning,
-    safeActivateKeepAwake,
-    safeDeactivateKeepAwake,
-    cleanupProcessing,
     safeSetState,
   ]);
 
@@ -935,23 +823,6 @@ const GestureService: React.FC<GestureScreenProps> = ({ navigation }) => {
         <Text style={[styles.status, { color: getStatusColor() }]}>
           Status: {getStatusText()}
         </Text>
-
-        {/* Keep camera running always when service is active */}
-        {state.isRunning && (
-          <TensorCamera
-            ref={cameraRef}
-            style={styles.camera}
-            type={CameraType.front}
-            resizeWidth={OUTPUT_TENSOR_WIDTH}
-            resizeHeight={OUTPUT_TENSOR_HEIGHT}
-            resizeDepth={3}
-            autorender={true}
-            onReady={handleCameraStream}
-            useCustomShadersToResize={false}
-            cameraTextureWidth={OUTPUT_TENSOR_WIDTH}
-            cameraTextureHeight={OUTPUT_TENSOR_HEIGHT}
-          />
-        )}
       </View>
     </SafeAreaView>
   );

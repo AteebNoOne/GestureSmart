@@ -16,7 +16,7 @@ public class BootReceiver extends BroadcastReceiver {
             boolean wasRunning = prefs.getBoolean("service_running", false);
             
             if (wasRunning) {
-                Intent serviceIntent = new Intent(context, GestureDetectionService.class);
+                Intent serviceIntent = new Intent(context, GestureService.class);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(serviceIntent);
                 } else {

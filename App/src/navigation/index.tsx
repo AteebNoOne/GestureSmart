@@ -24,6 +24,7 @@ import { HomeScreen } from '../screens/HomeScreen';
 import EyeTrackingService from '../screens/EyeTrackingScreen';
 import VoiceService from '../screens/VoiceServiceScreen';
 import EyeTracking from '../screens/EyeTracking';
+import GestureServiceNative from '../screens/GestureServiceScreenNative';
 // import VoiceService from '../screens/VoiceServiceScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -34,7 +35,7 @@ const AuthNavigator = () => (
   <AuthStack.Navigator screenOptions={{ headerShown: false }}>
     <AuthStack.Screen name="Login" component={LoginScreen} />
     <AuthStack.Screen name="Signup" component={SignupScreen} />
-    <AuthStack.Screen name="Detection" component={GestureService} />
+    <AuthStack.Screen name="Detection" component={GestureServiceNative} />
   </AuthStack.Navigator>
 );
 

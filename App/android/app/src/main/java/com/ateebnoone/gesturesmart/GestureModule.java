@@ -1,122 +1,96 @@
 package com.ateebnoone.gesturesmart;
 
-import android.content.Context;
 import android.content.Intent;
-import android.provider.Settings;
-import android.text.TextUtils;
+import android.os.Build;
 import android.util.Log;
-import androidx.annotation.NonNull;
+
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.modules.core.DeviceEventManagerModule;
 
 public class GestureModule extends ReactContextBaseJavaModule {
-    
     private static final String TAG = "GestureModule";
     private final ReactApplicationContext reactContext;
-    
-    public GestureModule(ReactApplicationContext reactContext) {
-        super(reactContext);
-        this.reactContext = reactContext;
+    private boolean isServiceRunning = false;
+    private static final String EVENT_NAME = "onGestureDetected";
+
+    public GestureModule(ReactApplicationContext context) {
+        super(context);
+        this.reactContext = context;
     }
-    
-    @NonNull
+
+    @Override
+    public void initialize() {
+        super.initialize();
+    }
+
+    @Override
+    public void onCatalystInstanceDestroy() {
+        super.onCatalystInstanceDestroy();
+    }
+
+    @ReactMethod
+    public void addListener(String eventName) {
+        // Keep: Required for RN built in Event Emitter
+    }
+
+    @ReactMethod
+    public void removeListeners(Integer count) {
+        // Keep: Required for RN built in Event Emitter
+    }
+
     @Override
     public String getName() {
-        return "GestureModule";
+        return "GestureService";
     }
-    
+
     @ReactMethod
-    public void checkAccessibilityPermission(Promise promise) {
+    public void startService(Promise promise) {
         try {
-            boolean isEnabled = isAccessibilityServiceEnabled();
-            promise.resolve(isEnabled);
-        } catch (Exception e) {
-            Log.e(TAG, "Error checking accessibility permission", e);
-            promise.reject("PERMISSION_CHECK_ERROR", e.getMessage());
-        }
-    }
-    
-    @ReactMethod
-    public void openAccessibilitySettings(Promise promise) {
-        try {
-            Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            reactContext.startActivity(intent);
-            promise.resolve(true);
-        } catch (Exception e) {
-            Log.e(TAG, "Error opening accessibility settings", e);
-            promise.reject("SETTINGS_ERROR", e.getMessage());
-        }
-    }
-    
-    @ReactMethod
-    public void sendGesture(String gesture) {
-        try {
-            Intent intent = new Intent("PERFORM_GESTURE");
-            intent.putExtra("gesture", gesture);
-            reactContext.sendBroadcast(intent);
-            Log.d(TAG, "Sent gesture: " + gesture);
-        } catch (Exception e) {
-            Log.e(TAG, "Error sending gesture", e);
-        }
-    }
-    
-    @ReactMethod
-    public void startGestureService() {
-        try {
-            Intent intent = new Intent("START_GESTURE_SERVICE");
-            reactContext.sendBroadcast(intent);
-            Log.d(TAG, "Started gesture service");
-        } catch (Exception e) {
-            Log.e(TAG, "Error starting gesture service", e);
-        }
-    }
-    
-    @ReactMethod
-    public void stopGestureService() {
-        try {
-            Intent intent = new Intent("STOP_GESTURE_SERVICE");
-            reactContext.sendBroadcast(intent);
-            Log.d(TAG, "Stopped gesture service");
-        } catch (Exception e) {
-            Log.e(TAG, "Error stopping gesture service", e);
-        }
-    }
-    
-    private boolean isAccessibilityServiceEnabled() {
-        int accessibilityEnabled = 0;
-        final String service = reactContext.getPackageName() + "/" + GestureAccessibilityService.class.getCanonicalName();
-        
-        try {
-            accessibilityEnabled = Settings.Secure.getInt(
-                reactContext.getContentResolver(),
-                Settings.Secure.ACCESSIBILITY_ENABLED
-            );
-        } catch (Settings.SettingNotFoundException e) {
-            Log.e(TAG, "Error finding accessibility setting: " + e.getMessage());
-        }
-        
-        TextUtils.SimpleStringSplitter mStringColonSplitter = new TextUtils.SimpleStringSplitter(':');
-        
-        if (accessibilityEnabled == 1) {
-            String settingValue = Settings.Secure.getString(
-                reactContext.getContentResolver(),
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            );
-            
-            if (settingValue != null) {
-                mStringColonSplitter.setString(settingValue);
-                while (mStringColonSplitter.hasNext()) {
-                    String accessibilityService = mStringColonSplitter.next();
-                    if (accessibilityService.equalsIgnoreCase(service)) {
-                        return true;
-                    }
-                }
+            Intent serviceIntent = new Intent(reactContext, GestureService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                reactContext.startForegroundService(serviceIntent);
+            } else {
+                reactContext.startService(serviceIntent);
             }
+            isServiceRunning = true;
+            promise.resolve(null);
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to start service: " + e.getMessage());
         }
-        
-        return false;
+    }
+
+    @ReactMethod
+    public void stopService(Promise promise) {
+        try {
+            Intent serviceIntent = new Intent(reactContext, GestureService.class);
+            reactContext.stopService(serviceIntent);
+            isServiceRunning = false;
+            promise.resolve(null);
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to stop service: " + e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void isServiceRunning(Promise promise) {
+        promise.resolve(isServiceRunning);
+    }
+
+    public void sendEvent(String gesture) {
+        if (reactContext.hasActiveReactInstance()) {
+            reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit(EVENT_NAME, gesture);
+        }
+    }
+
+    @Override
+    public Map<String, Object> getConstants() {
+        final Map<String, Object> constants = new HashMap<>();
+        constants.put("EVENT_NAME", EVENT_NAME);
+        return constants;
     }
 }
