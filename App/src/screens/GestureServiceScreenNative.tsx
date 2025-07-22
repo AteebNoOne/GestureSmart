@@ -18,9 +18,9 @@ import {
     Alert,
     Linking,
     ImageRequireSource,
-
 } from "react-native";
 import {
+    handleReturn,
     handleScrollDown,
     handleScrollUp,
     handleSwipeLeft,
@@ -36,10 +36,8 @@ import { useTheme } from "../hooks/useTheme";
 import { typography } from "../constants/theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { NavigationProp } from "@react-navigation/native";
-import SystemSetting from "react-native-system-setting";
 import * as Notifications from "expo-notifications";
 
-const VOLUME_ADJUSTMENT_THROTTLE = 500;
 
 // Types
 interface GestureConfig {
@@ -89,7 +87,6 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         isActive: false
     });
     // State
-    const [volume, setVolume] = useState<number>(0);
     const [currentGesture, setCurrentGesture] = useState<string>("none");
     const [backgroundPermissionGranted, setBackgroundPermissionGranted] = useState<boolean>(false);
     const [state, setState] = useState<AppState>({
@@ -119,14 +116,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             label: "Tap",
             imagePath: require("../assets/gestures/tap.png"),
         },
-        volume_up: {
-            label: "Volume Up",
-            imagePath: require("../assets/gestures/volume_up.png"),
-        },
-        volume_down: {
-            label: "Volume Down",
-            imagePath: require("../assets/gestures/volume_down.png"),
-        },
+
         swipe_left: {
             label: "Swipe Left",
             imagePath: require("../assets/gestures/swipe_left.png"),
@@ -383,13 +373,6 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         };
     }, [safeSetState, state.isRunning]);
 
-    // Initialize volume
-    useEffect(() => {
-        SystemSetting.getVolume()
-            .then(setVolume)
-            .catch(console.error);
-    }, []);
-
     // Gesture animation
     useEffect(() => {
         if (currentGesture && currentGesture !== "none") {
@@ -408,28 +391,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, [currentGesture, fadeAnim]);
 
-    // Volume adjustment
-    const adjustVolume = useCallback(async (direction: 'up' | 'down' = 'up'): Promise<void> => {
-        const now = Date.now();
-        if (now - lastAdjustmentTime.current < VOLUME_ADJUSTMENT_THROTTLE) return;
 
-        lastAdjustmentTime.current = now;
-        try {
-            const adjustment = direction === 'up' ? 0.05 : -0.05;
-            const newVolume = Math.max(0, Math.min(1, volume + adjustment));
-
-            if (newVolume !== volume) {
-                await SystemSetting.setVolume(newVolume, {
-                    type: "music",
-                    playSound: false,
-                    showUI: !state.isBackgroundActive,
-                });
-                setVolume(newVolume);
-            }
-        } catch (error) {
-            console.error("Volume adjustment failed:", error);
-        }
-    }, [volume, state.isBackgroundActive]);
 
     // Gesture handler
     const handleGesture = useCallback(async (gesture: string): Promise<void> => {
@@ -438,26 +400,23 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         try {
             // Handle gesture in any mode
             switch (gesture) {
-                case "follow_cursor":
-                    await handleSwipeLeft();
-                    break;
-                case "close_cursor":
-                    await handleSwipeRight();
-                    break;
-                case "tap":
-                    await handleTap(0, 0);
-                    break;
                 case "scroll_up":
                     await handleScrollUp();
                     break;
                 case "scroll_down":
                     await handleScrollDown();
                     break;
-                case "volume_up":
-                    await adjustVolume('up');
+                case "swipe_left":
+                    await handleSwipeLeft();
                     break;
-                case "volume_down":
-                    await adjustVolume('down');
+                case "swipe_right":
+                    await handleSwipeRight();
+                    break;
+                case "tap":
+                    await handleTap(0, 0);
+                    break;
+                case "return":
+                    await handleReturn();
                     break;
                 default:
                     break;
@@ -465,7 +424,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         } catch (error) {
             console.error('Error handling gesture:', error);
         }
-    }, [adjustVolume, state.isBackgroundActive]);
+    }, [state.isBackgroundActive]);
 
     // Service toggle
     const toggleService = useCallback(async (): Promise<void> => {
@@ -651,21 +610,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             color: "#333",
             textAlign: "center",
         },
-        volumeIndicator: {
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "center",
-            marginVertical: 10,
-            padding: 10,
-            backgroundColor: colors.primary,
-            borderRadius: 5,
-        },
-        volumeText: {
-            color: "white",
-            fontSize: 14,
-            fontWeight: "bold",
-            marginLeft: 5,
-        },
+
         handDetectionContainer: {
             flexDirection: "row",
             alignItems: "center",
@@ -805,12 +750,6 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     </View>
                 )}
 
-                <View style={styles.volumeIndicator}>
-                    <MaterialCommunityIcons name="volume-high" size={16} color="white" />
-                    <Text style={styles.volumeText}>
-                        Volume: {Math.round(volume * 100)}%
-                    </Text>
-                </View>
 
                 {renderDebugInfo()}
 

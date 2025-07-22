@@ -1,8 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
-import * as BackgroundFetch from 'expo-background-fetch';
-import * as TaskManager from 'expo-task-manager';
 
-const GESTURE_BACKGROUND_TASK = 'GESTURE_BACKGROUND_TASK';
 
 // Define types for the native module
 interface GestureActionsType {
@@ -11,6 +8,9 @@ interface GestureActionsType {
   tap(x: number, y: number): Promise<boolean>;
   scrollUp(): Promise<boolean>;
   scrollDown(): Promise<boolean>;
+  goBack(): Promise<boolean>;
+  goHome(): Promise<boolean>;
+  showRecentApps(): Promise<boolean>;
   requestAccessibilityPermission(): Promise<boolean>;
 }
 
@@ -90,3 +90,14 @@ export const handleScrollDown = async (): Promise<void> => {
   }
 };
 
+export const handleReturn = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.goBack();
+    } catch (error) {
+      console.error('Error performing scroll down:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
+  }
+};

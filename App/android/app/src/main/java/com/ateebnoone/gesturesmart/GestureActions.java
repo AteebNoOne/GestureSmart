@@ -152,13 +152,16 @@ public class GestureActions extends ReactContextBaseJavaModule {
             float screenWidth = metrics.widthPixels;
             float screenHeight = metrics.heightPixels;
 
-            // Start from middle-bottom of screen and move up
+            // Use exact center coordinates
+            float centerX = screenWidth / 2f;
+            float centerY = screenHeight / 2f;
+
+            // Start from center-bottom and move to center-top
             Path path = new Path();
-            path.moveTo(screenWidth * 0.5f, screenHeight * 0.7f);
-            path.lineTo(screenWidth * 0.5f, screenHeight * 0.3f);
+            path.moveTo(centerX, centerY + (screenHeight * 0.2f)); // Start below center
+            path.lineTo(centerX, centerY - (screenHeight * 0.2f)); // End above center
 
             GestureDescription.Builder gestureBuilder = new GestureDescription.Builder();
-            // Duration of 300ms for a smooth scroll
             gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 300));
 
             service.dispatchGesture(gestureBuilder.build(), null, null);
@@ -186,19 +189,103 @@ public class GestureActions extends ReactContextBaseJavaModule {
             float screenWidth = metrics.widthPixels;
             float screenHeight = metrics.heightPixels;
 
-            // Start from middle-top of screen and move down
+            // Use exact center coordinates
+            float centerX = screenWidth / 2f;
+            float centerY = screenHeight / 2f;
+
+            // Start from center-top and move to center-bottom
             Path path = new Path();
-            path.moveTo(screenWidth * 0.5f, screenHeight * 0.3f);
-            path.lineTo(screenWidth * 0.5f, screenHeight * 0.7f);
+            path.moveTo(centerX, centerY - (screenHeight * 0.2f)); // Start above center
+            path.lineTo(centerX, centerY + (screenHeight * 0.2f)); // End below center
 
             GestureDescription.Builder gestureBuilder = new GestureDescription.Builder();
-            // Duration of 300ms for a smooth scroll
             gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 300));
 
             service.dispatchGesture(gestureBuilder.build(), null, null);
             promise.resolve(true);
         } catch (Exception e) {
             promise.reject("ERROR", "Failed to perform scroll down: " + e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void goBack(Promise promise) {
+        if (!checkAccessibilityPermission()) {
+            promise.reject("ERROR", "Accessibility permission not granted");
+            return;
+        }
+
+        AccessibilityService service = getAccessibilityService();
+        if (service == null) {
+            promise.reject("ERROR", "Accessibility service not available");
+            return;
+        }
+
+        try {
+            // Perform global back action
+            boolean success = service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
+
+            if (success) {
+                promise.resolve(true);
+            } else {
+                promise.reject("ERROR", "Failed to perform back action");
+            }
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to perform back action: " + e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void goHome(Promise promise) {
+        if (!checkAccessibilityPermission()) {
+            promise.reject("ERROR", "Accessibility permission not granted");
+            return;
+        }
+
+        AccessibilityService service = getAccessibilityService();
+        if (service == null) {
+            promise.reject("ERROR", "Accessibility service not available");
+            return;
+        }
+
+        try {
+            // Perform global home action
+            boolean success = service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME);
+
+            if (success) {
+                promise.resolve(true);
+            } else {
+                promise.reject("ERROR", "Failed to perform home action");
+            }
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to perform home action: " + e.getMessage());
+        }
+    }
+
+    @ReactMethod
+    public void showRecentApps(Promise promise) {
+        if (!checkAccessibilityPermission()) {
+            promise.reject("ERROR", "Accessibility permission not granted");
+            return;
+        }
+
+        AccessibilityService service = getAccessibilityService();
+        if (service == null) {
+            promise.reject("ERROR", "Accessibility service not available");
+            return;
+        }
+
+        try {
+            // Perform global recents action
+            boolean success = service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS);
+
+            if (success) {
+                promise.resolve(true);
+            } else {
+                promise.reject("ERROR", "Failed to show recent apps");
+            }
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to show recent apps: " + e.getMessage());
         }
     }
 

@@ -49,13 +49,15 @@ public class GestureService extends Service {
     private static final String CHANNEL_ID = "GestureServiceChannel";
     private static final int NOTIFICATION_ID = 1;
 
-    // Gesture detection thresholds (matching TypeScript logic)
-    private static final float FINGER_CURVED_THRESHOLD = 0.15f;
-    private static final float FINGER_EXTENDED_THRESHOLD = -0.15f;
-    private static final float THUMB_EXTENDED_THRESHOLD = -0.15f;
-    private static final long GESTURE_COOLDOWN = 300; // ms
-    private static final float SWIPE_THRESHOLD = 30.0f;
-    private static final float SCROLL_DISTANCE = 0.15f;
+    // Improved gesture detection thresholds for easier detection
+    private static final float FINGER_EXTENDED_THRESHOLD = 0.05f; // More lenient for extension
+    private static final float FINGER_CURVED_THRESHOLD = 0.08f; // More lenient for curving
+    private static final float THUMB_EXTENDED_THRESHOLD = 0.05f; // Easier thumb detection
+    private static final long GESTURE_COOLDOWN = 1500; // Reduced cooldown for responsiveness
+    private static final float SWIPE_THRESHOLD = 0.08f; // Lower threshold for easier swipes
+    private static final float SWIPE_MIN_DISTANCE = 0.06f; // Minimum distance for swipe
+    private static final float VERTICAL_MOVEMENT_THRESHOLD = 0.05f; // For scroll detection
+    private static final int GESTURE_STABILITY_FRAMES = 2; // Frames to confirm gesture
 
     private CameraDevice cameraDevice;
     private CameraCaptureSession cameraCaptureSession;
@@ -65,16 +67,17 @@ public class GestureService extends Service {
     private Hands hands;
     private boolean isProcessing = false;
     private GestureModule gestureModule;
-    private static final long PROCESS_DELAY = 200;
+    private static final long PROCESS_DELAY = 300; // Faster processing
     private final Handler processHandler = new Handler(Looper.getMainLooper());
     private long lastProcessTime = 0;
 
-    // Gesture tracking variables
+    // Enhanced gesture tracking variables
     private PointF prevPalmPosition = null;
     private long lastGestureTime = 0;
-    private PointF lastHandDirection = new PointF(0, 0);
     private String lastGesture = "none";
     private PointF swipeStartPosition = null;
+    private int gestureConfirmationCount = 0;
+    private String candidateGesture = "none";
 
     private boolean handsDetected = false;
     private int handLandmarkCount = 0;
@@ -132,8 +135,8 @@ public class GestureService extends Service {
                 .setMaxNumHands(1)
                 .setRunOnGpu(true)
                 .setModelComplexity(1)
-                .setMinDetectionConfidence(0.8f) // Increased to match TypeScript
-                .setMinTrackingConfidence(0.8f)
+                .setMinDetectionConfidence(0.7f) // Slightly lower for better detection
+                .setMinTrackingConfidence(0.7f)
                 .build();
 
         hands = new Hands(this, options);
@@ -144,11 +147,17 @@ public class GestureService extends Service {
                 detectAndEmitGesture(result);
             } else {
                 // Reset tracking when no hands detected
-                prevPalmPosition = null;
-                swipeStartPosition = null;
+                resetGestureTracking();
                 Log.v(TAG, "No hands detected in current frame");
             }
         });
+    }
+
+    private void resetGestureTracking() {
+        prevPalmPosition = null;
+        swipeStartPosition = null;
+        gestureConfirmationCount = 0;
+        candidateGesture = "none";
     }
 
     private void detectAndEmitGesture(HandsResult result) {
@@ -169,9 +178,7 @@ public class GestureService extends Service {
                 handLandmarkCount = 0;
                 handConfidence = 0.0f;
 
-                // Reset tracking
-                prevPalmPosition = null;
-                swipeStartPosition = null;
+                resetGestureTracking();
 
                 if (gestureModule != null) {
                     processHandler.post(() -> {
@@ -220,72 +227,36 @@ public class GestureService extends Service {
             List<NormalizedLandmark> points = landmarks.getLandmarkList();
             long currentTime = System.currentTimeMillis();
 
-            // Calculate palm position (wrist + finger bases average)
+            // Calculate palm position (more stable calculation)
             PointF palmPosition = calculatePalmPosition(points);
 
-            // Get finger states
-            boolean isIndex = isFingerExtended(points, 5, 6, 8);
-            boolean isMiddle = isFingerExtended(points, 9, 10, 12);
-            boolean isRing = isFingerExtended(points, 13, 14, 16);
-            boolean isPinky = isFingerExtended(points, 17, 18, 20);
+            // Get finger states with improved detection
+            boolean isIndex = isFingerExtended(points, 5, 8); // Index finger
+            boolean isMiddle = isFingerExtended(points, 9, 12); // Middle finger
+            boolean isRing = isFingerExtended(points, 13, 16); // Ring finger
+            boolean isPinky = isFingerExtended(points, 17, 20); // Pinky finger
             boolean isThumb = isThumbExtended(points);
 
-            // Check for open hand (all fingers extended)
-            boolean isOpenHand = isIndex && isMiddle && isRing && isPinky;
+            // Count extended fingers
+            int extendedFingers = 0;
+            if (isIndex)
+                extendedFingers++;
+            if (isMiddle)
+                extendedFingers++;
+            if (isRing)
+                extendedFingers++;
+            if (isPinky)
+                extendedFingers++;
+            if (isThumb)
+                extendedFingers++;
 
-            // Handle swipe detection
-            String swipeGesture = detectSwipe(palmPosition, isOpenHand);
+            Log.v(TAG, String.format("Finger states - Index:%s, Middle:%s, Ring:%s, Pinky:%s, Thumb:%s (Total:%d)",
+                    isIndex, isMiddle, isRing, isPinky, isThumb, extendedFingers));
 
-            // Special case for continuing a swipe gesture
-            if ((lastGesture.equals("swipe_left") || lastGesture.equals("swipe_right")) &&
-                    !swipeGesture.equals("none") &&
-                    currentTime - lastGestureTime < GESTURE_COOLDOWN * 2) {
-                lastGesture = swipeGesture;
-                lastGestureTime = currentTime;
-                return swipeGesture;
-            }
+            // Static gesture detection with priority order
+            String staticGesture = detectStaticGestures(isIndex, isMiddle, isRing, isPinky, isThumb, extendedFingers);
 
-            // Cooldown check
-            if (currentTime - lastGestureTime < GESTURE_COOLDOWN) {
-                return lastGesture;
-            }
-
-            // Detect scroll gestures
-            boolean isScrollingDown = isOpenHand && areAllFingersDown(points);
-            boolean isScrollingUp = !isIndex && !isMiddle && !isRing && !isPinky && !isThumb;
-
-            // Gesture detection in priority order (matching TypeScript)
-            String detectedGesture = "none";
-
-            if (!swipeGesture.equals("none")) {
-                detectedGesture = swipeGesture;
-            } else if (isScrollingDown) {
-                detectedGesture = "scroll_down";
-            } else if (isScrollingUp) {
-                detectedGesture = "scroll_up";
-            } else if (isThumb && !isIndex && !isMiddle && !isRing && !isPinky) {
-                detectedGesture = "return";
-            } else if (isIndex && !isMiddle && !isRing && !isPinky && !isThumb) {
-                detectedGesture = "tap";
-            } else if (isIndex && isMiddle && !isRing && !isPinky) {
-                detectedGesture = "follow_cursor";
-            } else if (isIndex && isMiddle && isRing && !isPinky) {
-                detectedGesture = "close_cursor";
-            } else if (isIndex && points.get(4).getY() < points.get(8).getY()) {
-                detectedGesture = "volume_up";
-            } else if (isIndex && points.get(4).getY() > points.get(8).getY()) {
-                detectedGesture = "volume_down";
-            }
-
-            if (!detectedGesture.equals("none")) {
-                lastGestureTime = currentTime;
-                lastGesture = detectedGesture;
-                Log.i(TAG, "🎯 GESTURE DETECTED: " + detectedGesture);
-                return detectedGesture;
-            }
-
-            lastGesture = "none";
-            return "none";
+            return confirmGesture(staticGesture, currentTime);
 
         } catch (Exception e) {
             Log.e(TAG, "Error in gesture classification: " + e.getMessage());
@@ -293,80 +264,122 @@ public class GestureService extends Service {
         }
     }
 
-    private PointF calculatePalmPosition(List<NormalizedLandmark> points) {
-        // Use wrist and base of fingers to calculate palm center
-        NormalizedLandmark wrist = points.get(0);
-        NormalizedLandmark indexBase = points.get(5);
-        NormalizedLandmark pinkyBase = points.get(17);
+    private String detectStaticGestures(boolean isIndex, boolean isMiddle, boolean isRing, boolean isPinky,
+            boolean isThumb, int extendedFingers) {
+        // Clear gesture priorities for easy detection
 
-        float x = (wrist.getX() + indexBase.getX() + pinkyBase.getX()) / 3;
-        float y = (wrist.getY() + indexBase.getY() + pinkyBase.getY()) / 3;
+        // Fist (closed hand) - scroll up (most sensitive)
+        if (extendedFingers == 0) {
+            return "scroll_up";
+        }
+
+        // Index finger only - tap
+        if (isIndex && !isMiddle && !isRing && !isPinky && !isThumb) {
+            return "tap";
+        }
+
+        // Thumb only - return/back
+        if (isThumb && !isIndex && !isMiddle && !isRing && !isPinky) {
+            return "return";
+        }
+
+        // Index + Middle (peace sign) - follow cursor
+        if (isIndex && isMiddle && !isRing && !isPinky) {
+            return "swipe_right";
+        }
+
+        // Index + Middle + Ring (three fingers) - close cursor
+        if (isIndex && isMiddle && isRing && !isPinky) {
+            return "swipe_left";
+        }
+
+        // NEW GESTURE 2: Pinky only (Little finger) - close_cursor
+        // Unique and easy to detect since pinky is rarely extended alone
+        if (isPinky && !isIndex && !isMiddle && !isRing && !isThumb) {
+            return "cursor";
+        }
+
+        // Open hand (4-5 fingers) - scroll down
+        if (extendedFingers >= 4) {
+            return "scroll_down";
+        }
+
+        return "none";
+    }
+
+    private String confirmGesture(String gesture, long currentTime) {
+        // Cooldown check
+        if (currentTime - lastGestureTime < GESTURE_COOLDOWN) {
+            return lastGesture;
+        }
+
+        if (gesture.equals("none")) {
+            candidateGesture = "none";
+            gestureConfirmationCount = 0;
+            return "none";
+        }
+
+        // Gesture stability confirmation
+        if (gesture.equals(candidateGesture)) {
+            gestureConfirmationCount++;
+        } else {
+            candidateGesture = gesture;
+            gestureConfirmationCount = 1;
+        }
+
+        // For movement gestures, confirm immediately
+        if (gesture.startsWith("swipe_") || gesture.startsWith("scroll_")) {
+            lastGestureTime = currentTime;
+            lastGesture = gesture;
+            Log.i(TAG, "🎯 MOVEMENT GESTURE DETECTED: " + gesture);
+            return gesture;
+        }
+
+        // For static gestures, require confirmation
+        if (gestureConfirmationCount >= GESTURE_STABILITY_FRAMES) {
+            lastGestureTime = currentTime;
+            lastGesture = gesture;
+            Log.i(TAG, "🎯 STATIC GESTURE CONFIRMED: " + gesture);
+            return gesture;
+        }
+
+        return lastGesture;
+    }
+
+    private PointF calculatePalmPosition(List<NormalizedLandmark> points) {
+        // Use multiple points for more stable palm center calculation
+        NormalizedLandmark wrist = points.get(0);
+        NormalizedLandmark indexMcp = points.get(5);
+        NormalizedLandmark middleMcp = points.get(9);
+        NormalizedLandmark ringMcp = points.get(13);
+        NormalizedLandmark pinkyMcp = points.get(17);
+
+        float x = (wrist.getX() + indexMcp.getX() + middleMcp.getX() + ringMcp.getX() + pinkyMcp.getX()) / 5;
+        float y = (wrist.getY() + indexMcp.getY() + middleMcp.getY() + ringMcp.getY() + pinkyMcp.getY()) / 5;
 
         return new PointF(x, y);
     }
 
-    private boolean isFingerExtended(List<NormalizedLandmark> points, int mcp, int pip, int tip) {
-        // Check if finger tip is significantly above the base (extended)
+    private boolean isFingerExtended(List<NormalizedLandmark> points, int mcp, int tip) {
+        // Simplified finger extension check
         float tipY = points.get(tip).getY();
-        float baseY = points.get(mcp).getY();
-        return (tipY - baseY) < FINGER_EXTENDED_THRESHOLD;
+        float mcpY = points.get(mcp).getY();
+
+        // For easier detection, consider finger extended if tip is above MCP
+        return (mcpY - tipY) > FINGER_EXTENDED_THRESHOLD;
     }
 
     private boolean isThumbExtended(List<NormalizedLandmark> points) {
-        // Check thumb extension based on distance from palm
-        float thumbTipY = points.get(4).getY();
-        float thumbBaseY = points.get(2).getY();
-        return (thumbTipY - thumbBaseY) < THUMB_EXTENDED_THRESHOLD;
-    }
+        // Thumb extension based on X-axis movement (thumb moves sideways)
+        float thumbTipX = points.get(4).getX();
+        float thumbMcpX = points.get(2).getX();
+        float wristX = points.get(0).getX();
 
-    private boolean areAllFingersDown(List<NormalizedLandmark> points) {
-        // Check if all finger tips are below their bases (pointing down)
-        return points.get(8).getY() > points.get(5).getY() && // Index
-                points.get(12).getY() > points.get(9).getY() && // Middle
-                points.get(16).getY() > points.get(13).getY() && // Ring
-                points.get(20).getY() > points.get(17).getY(); // Pinky
-    }
+        // Check if thumb tip is significantly away from wrist
+        float thumbDistance = Math.abs(thumbTipX - wristX);
+        float mcpDistance = Math.abs(thumbMcpX - wristX);
 
-    private String detectSwipe(PointF palmPosition, boolean isOpenHand) {
-        String swipeGesture = "none";
-
-        if (prevPalmPosition != null && isOpenHand) {
-            float deltaX = palmPosition.x - prevPalmPosition.x;
-            float deltaY = palmPosition.y - prevPalmPosition.y;
-
-            // Store hand movement direction
-            lastHandDirection.x = deltaX;
-            lastHandDirection.y = deltaY;
-
-            // Initialize swipe start position if significant horizontal movement
-            if (swipeStartPosition == null && Math.abs(deltaX) > 0.005f) {
-                swipeStartPosition = new PointF(prevPalmPosition.x, prevPalmPosition.y);
-            }
-
-            // Check for swipe completion
-            if (swipeStartPosition != null) {
-                float totalDeltaX = palmPosition.x - swipeStartPosition.x;
-                float totalDeltaY = Math.abs(palmPosition.y - swipeStartPosition.y);
-
-                // Convert to screen coordinates approximation for threshold comparison
-                float screenDeltaX = Math.abs(totalDeltaX * 1000); // Rough conversion
-
-                // Check if movement is primarily horizontal and exceeds threshold
-                if (screenDeltaX > SWIPE_THRESHOLD &&
-                        Math.abs(totalDeltaX) > totalDeltaY * 1.5) {
-                    swipeGesture = totalDeltaX < 0 ? "swipe_left" : "swipe_right";
-                    swipeStartPosition = null; // Reset after detection
-                }
-            }
-        } else if (!isOpenHand) {
-            // Reset swipe tracking if hand is not open
-            swipeStartPosition = null;
-        }
-
-        // Update previous position
-        prevPalmPosition = new PointF(palmPosition.x, palmPosition.y);
-
-        return swipeGesture;
+        return thumbDistance > mcpDistance + THUMB_EXTENDED_THRESHOLD;
     }
 
     public String getHandDetectionInfo() {
