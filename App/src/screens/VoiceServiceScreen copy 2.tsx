@@ -22,6 +22,9 @@ import { useTheme } from '../hooks/useTheme';
 import { typography } from '../constants/theme';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { NavigationProp } from '@react-navigation/native';
+import { Readable } from 'stream'
+import { AssemblyAI } from 'assemblyai'
+import recorder from 'node-record-lpcm16'
 
 interface CommandConfig {
   [key: string]: {
@@ -31,21 +34,16 @@ interface CommandConfig {
   };
 }
 
-interface TranscriptTurn {
-  transcript?: string;
-  isFormatted?: boolean;
-}
-
-// AssemblyAI Configuration - Following SDK pattern
-const ASSEMBLYAI_CONFIG = {
-  apiKey: '77955c73bf114d379a9047c6525e0d58',
-  sampleRate: 16000,
-  formatTurns: true,
-  channels: 1,
-};
-
 const BACKGROUND_TASK_NAME = 'VOICE_DETECTION';
 const NOTIFICATION_ID = 'voice-service-notification';
+
+// AssemblyAI Streaming API v3 Configuration
+const ASSEMBLYAI_API_KEY = '77955c73bf114d379a9047c6525e0d58'; // Your API key
+const CONNECTION_PARAMS = {
+  sample_rate: 16000,
+  format_turns: true, // Request formatted final transcripts
+};
+const API_ENDPOINT_BASE_URL = 'wss://streaming.assemblyai.com/v3/ws';
 
 // Configure notifications
 Notifications.setNotificationHandler({
@@ -91,140 +89,6 @@ const showForegroundNotification = async () => {
   });
 };
 
-// SDK-like Streaming Transcriber Class
-class StreamingTranscriber {
-  private ws: WebSocket | null = null;
-  private isConnected = false;
-  private sessionId: string | null = null;
-  private eventHandlers: { [key: string]: Function[] } = {};
-
-  constructor(private config: typeof ASSEMBLYAI_CONFIG) { }
-
-  // Event emitter methods - following SDK pattern
-  on(event: string, handler: Function) {
-    if (!this.eventHandlers[event]) {
-      this.eventHandlers[event] = [];
-    }
-    this.eventHandlers[event].push(handler);
-  }
-
-  private emit(event: string, ...args: any[]) {
-    if (this.eventHandlers[event]) {
-      this.eventHandlers[event].forEach(handler => handler(...args));
-    }
-  }
-
-  async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const queryParams = new URLSearchParams({
-        sample_rate: this.config.sampleRate.toString(),
-        format_turns: this.config.formatTurns.toString(),
-      });
-
-      const wsUrl = `wss://streaming.assemblyai.com/v3/ws?${queryParams.toString()}`;
-
-      this.ws = new WebSocket(wsUrl, [], {
-        headers: {
-          'Authorization': this.config.apiKey,
-        },
-      });
-
-      const timeout = setTimeout(() => {
-        this.ws?.close();
-        reject(new Error('Connection timeout'));
-      }, 10000);
-
-      this.ws.onopen = () => {
-        clearTimeout(timeout);
-        this.isConnected = true;
-        console.log('Connected to streaming transcript service');
-        resolve();
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          this.handleMessage(data);
-        } catch (error) {
-          console.error('Error parsing message:', error);
-          this.emit('error', error);
-        }
-      };
-
-      this.ws.onerror = (error) => {
-        clearTimeout(timeout);
-        console.error('WebSocket error:', error);
-        this.emit('error', error);
-        reject(error);
-      };
-
-      this.ws.onclose = (event) => {
-        clearTimeout(timeout);
-        this.isConnected = false;
-        console.log('Session closed:', event.code, event.reason);
-        this.emit('close', event.code, event.reason);
-      };
-    });
-  }
-
-  private handleMessage(data: any) {
-    const msgType = data.type;
-
-    if (msgType === 'Begin') {
-      this.sessionId = data.id;
-      const expiresAt = data.expires_at;
-      console.log(`Session opened with ID: ${this.sessionId}`);
-      this.emit('open', { id: this.sessionId, expiresAt });
-    } else if (msgType === 'Turn') {
-      const transcript = data.transcript || '';
-      const isFormatted = data.turn_is_formatted;
-
-      if (transcript) {
-        const turn: TranscriptTurn = {
-          transcript,
-          isFormatted
-        };
-
-        console.log('Turn:', transcript, isFormatted ? '(formatted)' : '(partial)');
-        this.emit('turn', turn);
-      }
-    } else if (msgType === 'Termination') {
-      const audioDuration = data.audio_duration_seconds;
-      const sessionDuration = data.session_duration_seconds;
-      console.log(`Session terminated: Audio=${audioDuration}s, Session=${sessionDuration}s`);
-      this.emit('termination', { audioDuration, sessionDuration });
-    }
-  }
-
-  // Send audio data - following SDK stream pattern
-  sendAudio(audioData: Uint8Array) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(audioData);
-    }
-  }
-
-  async close(): Promise<void> {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      // Send termination message
-      const terminateMessage = { type: 'Terminate' };
-      console.log('Closing streaming transcript connection');
-      this.ws.send(JSON.stringify(terminateMessage));
-    }
-
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-
-    this.isConnected = false;
-    this.sessionId = null;
-  }
-
-  get connected(): boolean {
-    return this.isConnected;
-  }
-}
-
 interface VoiceScreenProps {
   navigation: NavigationProp<any>;
 }
@@ -238,15 +102,15 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
 
   // Audio recording refs
   const recordingRef = useRef<Audio.Recording | null>(null);
-  const transcriberRef = useRef<StreamingTranscriber | null>(null);
+  const websocketRef = useRef<WebSocket | null>(null);
   const isRecordingRef = useRef(false);
-  const audioStreamIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioChunkIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isStreamingRef = useRef(false);
+  const isPreparingRecordingRef = useRef(false);
 
   const [currentCommand, setCurrentCommand] = useState<string>('none');
   const [isListening, setIsListening] = useState(false);
   const [lastHeard, setLastHeard] = useState<string>('');
-  const [sessionId, setSessionId] = useState<string>('');
   const [state, setState] = useState<{
     isRunning: boolean;
     isInitialized: boolean;
@@ -319,82 +183,134 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
     };
   }, []);
 
-  // Create and setup transcriber - following SDK pattern
-  const createTranscriber = (): StreamingTranscriber => {
-    const transcriber = new StreamingTranscriber(ASSEMBLYAI_CONFIG);
+  // Create WebSocket connection to AssemblyAI Streaming API v3
+  const createWebSocket = (): Promise<WebSocket> => {
+    return new Promise((resolve, reject) => {
+      // Build query string for connection parameters
+      const queryParams = new URLSearchParams({
+        sample_rate: CONNECTION_PARAMS.sample_rate.toString(),
+        format_turns: CONNECTION_PARAMS.format_turns.toString(),
+      });
 
-    // Setup event handlers - following SDK pattern
-    transcriber.on('open', ({ id }: { id: string }) => {
-      console.log(`Session opened with ID: ${id}`);
-      setSessionId(id);
-      setIsListening(true);
+      // Correct AssemblyAI Streaming API v3 endpoint
+      const wsUrl = `${API_ENDPOINT_BASE_URL}?${queryParams.toString()}`;
+      console.log('Connecting to:', wsUrl);
+
+      const ws = new WebSocket(wsUrl, [], {
+        headers: {
+          'Authorization': ASSEMBLYAI_API_KEY,
+        },
+      });
+
+      const timeout = setTimeout(() => {
+        ws.close();
+        reject(new Error('WebSocket connection timeout'));
+      }, 10000);
+
+      ws.onopen = () => {
+        clearTimeout(timeout);
+        console.log('AssemblyAI Streaming v3 WebSocket connected');
+        setIsListening(true);
+        resolve(ws);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('AssemblyAI v3 message:', data);
+
+          const msgType = data.type;
+
+          if (msgType === 'Begin') {
+            const sessionId = data.id;
+            const expiresAt = data.expires_at;
+            console.log(`Session began: ID=${sessionId}, ExpiresAt=${new Date(expiresAt * 1000).toISOString()}`);
+          } else if (msgType === 'Turn') {
+            const transcript = data.transcript || '';
+            const formatted = data.turn_is_formatted;
+
+            if (transcript) {
+              if (formatted) {
+                console.log('Final transcript:', transcript);
+                setLastHeard(transcript);
+                handleCommand(transcript.toLowerCase());
+              } else {
+                console.log('Partial transcript:', transcript);
+                setLastHeard(`${transcript}...`);
+              }
+            }
+          } else if (msgType === 'Termination') {
+            const audioDuration = data.audio_duration_seconds;
+            const sessionDuration = data.session_duration_seconds;
+            console.log(`Session Terminated: Audio Duration=${audioDuration}s, Session Duration=${sessionDuration}s`);
+            setIsListening(false);
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+          console.error('Message data:', event.data);
+        }
+      };
+
+      ws.onerror = (error) => {
+        clearTimeout(timeout);
+        console.error('WebSocket error:', error);
+        setIsListening(false);
+        reject(error);
+      };
+
+      ws.onclose = (event) => {
+        clearTimeout(timeout);
+        console.log(`WebSocket closed: ${event.code} - ${event.reason}`);
+        setIsListening(false);
+      };
     });
-
-    transcriber.on('error', (error: any) => {
-      console.error('Transcriber error:', error);
-      setIsListening(false);
-    });
-
-    transcriber.on('close', (code: number, reason: string) => {
-      console.log('Session closed:', code, reason);
-      setIsListening(false);
-      setSessionId('');
-    });
-
-    // Handle transcript turns - following SDK pattern
-    transcriber.on('turn', (turn: TranscriptTurn) => {
-      if (!turn.transcript) {
-        return;
-      }
-
-      if (turn.isFormatted) {
-        // Final transcript
-        console.log('Turn:', turn.transcript);
-        setLastHeard(turn.transcript);
-        handleCommand(turn.transcript.toLowerCase());
-      } else {
-        // Partial transcript
-        setLastHeard(`${turn.transcript}...`);
-      }
-    });
-
-    transcriber.on('termination', ({ audioDuration, sessionDuration }: any) => {
-      console.log(`Audio: ${audioDuration}s, Session: ${sessionDuration}s`);
-    });
-
-    return transcriber;
   };
 
-  // Start recording and streaming - following SDK pattern
+  const closeWebSocket = () => {
+    if (websocketRef.current) {
+      if (websocketRef.current.readyState === WebSocket.OPEN) {
+        // Send termination message for v3 API
+        const terminateMessage = { type: 'Terminate' };
+        console.log('Sending termination message:', JSON.stringify(terminateMessage));
+        websocketRef.current.send(JSON.stringify(terminateMessage));
+      }
+      websocketRef.current.close();
+      websocketRef.current = null;
+    }
+  };
+
+  // Start recording with proper single Recording management
   const startRecording = async () => {
     try {
-      if (isRecordingRef.current) {
+      if (isRecordingRef.current || isPreparingRecordingRef.current) {
         console.log('Recording already in progress');
         return;
       }
 
-      console.log('Starting recording');
+      // Create WebSocket connection first
+      websocketRef.current = await createWebSocket();
 
-      // Create transcriber and connect - following SDK pattern
-      transcriberRef.current = createTranscriber();
-      await transcriberRef.current.connect();
-
-      // Start continuous audio recording
+      // Start continuous recording
       await startContinuousRecording();
-
-      // Start streaming audio data
-      startAudioStreaming();
 
     } catch (error) {
       console.error('Error starting recording:', error);
-      setIsListening(false);
       isRecordingRef.current = false;
+      isPreparingRecordingRef.current = false;
+      setIsListening(false);
     }
   };
 
   const startContinuousRecording = async () => {
     try {
-      // Clean up any existing recording
+      if (isPreparingRecordingRef.current) {
+        console.log('Already preparing recording');
+        return;
+      }
+
+      isPreparingRecordingRef.current = true;
+
+      // Clean up any existing recording first
       if (recordingRef.current) {
         try {
           await recordingRef.current.stopAndUnloadAsync();
@@ -410,15 +326,15 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
           extension: '.wav',
           outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_DEFAULT,
           audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_DEFAULT,
-          sampleRate: ASSEMBLYAI_CONFIG.sampleRate,
-          numberOfChannels: ASSEMBLYAI_CONFIG.channels,
+          sampleRate: 16000,
+          numberOfChannels: 1,
           bitRate: 128000,
         },
         ios: {
           extension: '.wav',
           audioQuality: Audio.RECORDING_OPTION_IOS_AUDIO_QUALITY_HIGH,
-          sampleRate: ASSEMBLYAI_CONFIG.sampleRate,
-          numberOfChannels: ASSEMBLYAI_CONFIG.channels,
+          sampleRate: 16000,
+          numberOfChannels: 1,
           bitRate: 128000,
           linearPCMBitDepth: 16,
           linearPCMIsBigEndian: false,
@@ -429,65 +345,70 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
       recordingRef.current = recording;
       isRecordingRef.current = true;
       isStreamingRef.current = true;
+      isPreparingRecordingRef.current = false;
 
       await recording.startAsync();
       console.log('Continuous recording started');
+
+      // Start the streaming cycle with longer intervals to avoid conflicts
+      startStreamingCycle();
 
     } catch (error) {
       console.error('Error starting continuous recording:', error);
       isRecordingRef.current = false;
       isStreamingRef.current = false;
+      isPreparingRecordingRef.current = false;
     }
   };
 
-  // Stream audio data - following SDK pattern
-  const startAudioStreaming = () => {
-    if (audioStreamIntervalRef.current) {
-      clearInterval(audioStreamIntervalRef.current);
+  const startStreamingCycle = () => {
+    if (audioChunkIntervalRef.current) {
+      clearInterval(audioChunkIntervalRef.current);
     }
 
-    // Stream audio chunks at regular intervals
-    audioStreamIntervalRef.current = setInterval(async () => {
-      if (!isStreamingRef.current || !transcriberRef.current?.connected || !recordingRef.current) {
+    // Use longer intervals (2 seconds) to avoid Recording conflicts
+    audioChunkIntervalRef.current = setInterval(async () => {
+      if (!isStreamingRef.current || !websocketRef.current || !recordingRef.current || isPreparingRecordingRef.current) {
         return;
       }
 
       try {
-        await streamAudioChunk();
+        await processAudioChunk();
       } catch (error) {
-        console.error('Error in audio streaming:', error);
+        console.error('Error in streaming cycle:', error);
       }
-    }, 1000); // Stream every 1 second
+    }, 2000); // Process every 2 seconds
   };
 
-  const streamAudioChunk = async () => {
+  const processAudioChunk = async () => {
     try {
-      if (!recordingRef.current || !transcriberRef.current?.connected || !isStreamingRef.current) {
+      if (!recordingRef.current || !websocketRef.current || !isStreamingRef.current || isPreparingRecordingRef.current) {
         return;
       }
 
       const status = await recordingRef.current.getStatusAsync();
-      if (!status.isRecording || status.durationMillis < 800) {
-        return; // Need minimum audio duration
+      if (!status.isRecording || status.durationMillis < 1000) {
+        return; // Need at least 1 second of audio
       }
 
-      // Stop current recording to get audio data
+      // Stop current recording and get the audio data
       const uri = await recordingRef.current.stopAndUnloadAsync();
       recordingRef.current = null;
 
-      // Send audio to transcriber - following SDK pattern
-      await sendAudioToTranscriber(uri);
+      // Send to AssemblyAI
+      await sendAudioToAssemblyAI(uri);
 
-      // Restart recording for continuous streaming
+      // Start new recording if still streaming
       if (isStreamingRef.current) {
         await startContinuousRecording();
       }
 
     } catch (error) {
-      console.error('Error streaming audio chunk:', error);
+      console.error('Error processing audio chunk:', error);
+      isPreparingRecordingRef.current = false;
 
-      // Try to recover
-      if (isStreamingRef.current) {
+      // Try to recover by restarting recording
+      if (isStreamingRef.current && !isPreparingRecordingRef.current) {
         setTimeout(async () => {
           try {
             await startContinuousRecording();
@@ -499,38 +420,36 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
     }
   };
 
-  // Send audio to transcriber - following SDK pattern
-  const sendAudioToTranscriber = async (uri: string) => {
+  // Send audio data to AssemblyAI v3 API
+  const sendAudioToAssemblyAI = async (uri: string) => {
     try {
-      if (!transcriberRef.current?.connected) {
+      if (!websocketRef.current || websocketRef.current.readyState !== WebSocket.OPEN) {
         return;
       }
 
       // Read audio file as binary data
       const response = await fetch(uri);
       const arrayBuffer = await response.arrayBuffer();
-      const audioData = new Uint8Array(arrayBuffer);
 
-      // Send to transcriber - following SDK pattern
-      transcriberRef.current.sendAudio(audioData);
+      // Convert to Buffer and send directly (v3 API expects raw binary data)
+      const audioBuffer = new Uint8Array(arrayBuffer);
+      websocketRef.current.send(audioBuffer);
 
-      console.log(`Streamed ${audioData.length} bytes to transcriber`);
+      console.log(`Sent ${audioBuffer.length} bytes to AssemblyAI v3`);
 
     } catch (error) {
-      console.error('Error sending audio to transcriber:', error);
+      console.error('Error sending audio to AssemblyAI:', error);
     }
   };
 
   const stopRecording = async () => {
     try {
-      console.log('Stopping recording');
-
       isStreamingRef.current = false;
 
       // Clear streaming interval
-      if (audioStreamIntervalRef.current) {
-        clearInterval(audioStreamIntervalRef.current);
-        audioStreamIntervalRef.current = null;
+      if (audioChunkIntervalRef.current) {
+        clearInterval(audioChunkIntervalRef.current);
+        audioChunkIntervalRef.current = null;
       }
 
       // Stop and clean up recording
@@ -544,6 +463,7 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
       }
 
       isRecordingRef.current = false;
+      isPreparingRecordingRef.current = false;
       setIsListening(false);
 
     } catch (error) {
@@ -575,13 +495,7 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
 
   const cleanup = async () => {
     await stopRecording();
-
-    // Close transcriber connection - following SDK pattern
-    if (transcriberRef.current) {
-      await transcriberRef.current.close();
-      transcriberRef.current = null;
-    }
-
+    closeWebSocket();
     await safeDeactivateKeepAwake();
     await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_ID);
   };
@@ -716,13 +630,6 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
       marginBottom: responsiveHeight(1),
       fontStyle: 'italic',
     },
-    sessionText: {
-      fontSize: responsiveFontSize(1.6),
-      fontFamily: typography.fontFamily.regular,
-      color: colors.textSecondary,
-      textAlign: 'center',
-      marginBottom: responsiveHeight(1),
-    },
     commandImage: {
       width: responsiveWidth(50),
       height: responsiveWidth(50),
@@ -796,7 +703,7 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
               { opacity: isListening ? 1 : 0.3 }
             ]} />
             <Text style={styles.listeningText}>
-              {isListening ? 'Listening with AssemblyAI Streaming...' : 'Connecting...'}
+              {isListening ? 'Listening with AssemblyAI v3 Streaming...' : 'Connecting...'}
             </Text>
           </View>
         )}
@@ -807,12 +714,6 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
               ? 'Voice service stopped'
               : commandConfigs[currentCommand]?.label || 'Say a command...'}
           </Text>
-
-          {sessionId && (
-            <Text style={styles.sessionText}>
-              Session: {sessionId.substring(0, 8)}...
-            </Text>
-          )}
 
           {lastHeard && (
             <Text style={styles.debugText}>
@@ -852,7 +753,7 @@ const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
         </Text>
 
         <Text style={styles.status}>
-          Powered by AssemblyAI Streaming SDK Pattern
+          Powered by AssemblyAI Streaming API v3
         </Text>
       </View>
     </SafeAreaView>

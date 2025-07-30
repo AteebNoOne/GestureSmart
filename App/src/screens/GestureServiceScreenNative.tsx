@@ -20,6 +20,7 @@ import {
     ImageRequireSource,
 } from "react-native";
 import {
+    handleCursor,
     handleReturn,
     handleScrollDown,
     handleScrollUp,
@@ -400,6 +401,9 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         try {
             // Handle gesture in any mode
             switch (gesture) {
+                case "cursor":
+                    await handleCursor();
+                    break;
                 case "scroll_up":
                     await handleScrollUp();
                     break;
@@ -457,6 +461,18 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             } else {
                 // Stop native service
                 try {
+                    // Make sure cursor is closed before stopping service
+                    const GestureActions = NativeModules.GestureActions;
+                    try {
+                        await GestureActions.getCursorStatus().then(async (isActive: boolean) => {
+                            if (isActive) {
+                                await GestureActions.cursor();
+                            }
+                        });
+                    } catch (e) {
+                        console.error('Error checking cursor status:', e);
+                    }
+
                     await GestureServiceModule.stopService();
                     safeSetState((prev) => ({
                         ...prev,

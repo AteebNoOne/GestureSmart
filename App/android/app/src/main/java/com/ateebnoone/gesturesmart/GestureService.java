@@ -5,7 +5,10 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.ImageFormat;
 import android.graphics.SurfaceTexture;
 import android.graphics.Bitmap;
@@ -33,6 +36,7 @@ import com.facebook.react.ReactApplication;
 import com.facebook.react.ReactNativeHost;
 import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.Promise;
 import com.google.mediapipe.solutions.hands.HandsResult;
 import com.google.mediapipe.solutions.hands.HandsOptions;
 import com.google.mediapipe.solutions.hands.Hands;
@@ -58,6 +62,11 @@ public class GestureService extends Service {
     private static final float SWIPE_MIN_DISTANCE = 0.06f; // Minimum distance for swipe
     private static final float VERTICAL_MOVEMENT_THRESHOLD = 0.05f; // For scroll detection
     private static final int GESTURE_STABILITY_FRAMES = 2; // Frames to confirm gesture
+
+    // Cursor mode variables
+    private boolean isCursorMode = false;
+    private GestureActions gestureActions;
+    private final Handler cursorUpdateHandler = new Handler();
 
     private CameraDevice cameraDevice;
     private CameraCaptureSession cameraCaptureSession;
@@ -94,6 +103,43 @@ public class GestureService extends Service {
         }
     }
 
+    // Broadcast receiver for cursor mode changes
+    private final BroadcastReceiver cursorModeReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if ("com.ateebnoone.gesturesmart.CURSOR_MODE".equals(intent.getAction())) {
+                boolean active = intent.getBooleanExtra("active", false);
+                isCursorMode = active;
+                Log.i(TAG, "Cursor mode changed to: " + (active ? "ACTIVE" : "INACTIVE"));
+
+                if (active) {
+                    // Reset gesture tracking when entering cursor mode
+                    resetGestureTracking();
+                    // Ensure cursor is showing
+                    if (gestureActions != null) {
+                        try {
+                            // Initialize cursor at center of screen
+                            gestureActions.updateCursorPosition(0.5f, 0.5f);
+                            Log.i(TAG, "Cursor initialized at center position");
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error showing cursor: " + e.getMessage());
+                        }
+                    }
+                } else {
+                    // Hide cursor when exiting cursor mode
+                    if (gestureActions != null) {
+                        try {
+                            gestureActions.updateCursorPosition(-1f, -1f); // Signal to hide cursor
+                            Log.i(TAG, "Cursor hidden");
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error hiding cursor: " + e.getMessage());
+                        }
+                    }
+                }
+            }
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -105,15 +151,22 @@ public class GestureService extends Service {
             startForeground(NOTIFICATION_ID, createNotification());
             Log.i(TAG, "Service started in foreground");
 
+            // Register broadcast receiver for cursor mode
+            IntentFilter filter = new IntentFilter("com.ateebnoone.gesturesmart.CURSOR_MODE");
+            registerReceiver(cursorModeReceiver, filter);
+            Log.i(TAG, "Cursor mode broadcast receiver registered");
+
             // Get GestureModule instance
             ReactApplication application = (ReactApplication) getApplication();
             ReactNativeHost reactNativeHost = application.getReactNativeHost();
             ReactContext reactContext = reactNativeHost.getReactInstanceManager().getCurrentReactContext();
             if (reactContext != null) {
                 gestureModule = new GestureModule((ReactApplicationContext) reactContext);
-                Log.i(TAG, "GestureModule initialized");
+                // Initialize GestureActions for cursor control
+                gestureActions = new GestureActions((ReactApplicationContext) reactContext);
+                Log.i(TAG, "GestureModule and GestureActions initialized");
             } else {
-                Log.e(TAG, "ReactContext is null, could not initialize GestureModule");
+                Log.e(TAG, "ReactContext is null, could not initialize GestureModule and GestureActions");
             }
 
             initializeMediaPipe();
@@ -160,6 +213,37 @@ public class GestureService extends Service {
         candidateGesture = "none";
     }
 
+    private void updateCursorPosition(NormalizedLandmarkList landmarks) {
+        try {
+            // Use index finger tip (landmark 8) for cursor control
+            NormalizedLandmark indexTip = landmarks.getLandmarkList().get(8);
+
+            // MediaPipe coordinates are normalized (0.0 - 1.0)
+            // X coordinate is fine as-is
+            // Y coordinate needs to be flipped since MediaPipe uses different origin
+            float normalizedX = indexTip.getX();
+            float normalizedY = 1.0f - indexTip.getY(); // Flip Y coordinate
+
+            // Add smoothing to reduce jitter
+            if (prevPalmPosition != null) {
+                float smoothingFactor = 0.7f; // Adjust for smoothness vs responsiveness
+                normalizedX = prevPalmPosition.x * smoothingFactor + normalizedX * (1 - smoothingFactor);
+                normalizedY = prevPalmPosition.y * smoothingFactor + normalizedY * (1 - smoothingFactor);
+            }
+
+            // Store for next frame smoothing
+            prevPalmPosition = new PointF(normalizedX, normalizedY);
+
+            // Update cursor position through GestureActions
+            if (gestureActions != null) {
+                gestureActions.updateCursorPosition(normalizedX, normalizedY);
+                Log.v(TAG, String.format("Cursor position updated: (%.3f, %.3f)", normalizedX, normalizedY));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating cursor position: " + e.getMessage());
+        }
+    }
+
     private void detectAndEmitGesture(HandsResult result) {
         if (!isProcessing) {
             Log.d(TAG, "Processing is disabled, skipping gesture detection");
@@ -200,6 +284,44 @@ public class GestureService extends Service {
                 });
             }
 
+            // Handle cursor mode - ALWAYS update cursor position AND detect tap gestures
+            if (isCursorMode) {
+                // Update cursor position for EVERY frame when in cursor mode
+                if (gestureActions != null) {
+                    NormalizedLandmark indexTip = landmarks.getLandmarkList().get(8);
+                    float normalizedX = indexTip.getX();
+                    float normalizedY = 1.0f - indexTip.getY(); // Flip Y coordinate
+
+                    // Add smoothing to reduce jitter
+                    if (prevPalmPosition != null) {
+                        float smoothingFactor = 0.5f; // Reduced for more responsive movement
+                        normalizedX = prevPalmPosition.x * smoothingFactor + normalizedX * (1 - smoothingFactor);
+                        normalizedY = prevPalmPosition.y * smoothingFactor + normalizedY * (1 - smoothingFactor);
+                    }
+
+                    // Store current position for next frame
+                    prevPalmPosition = new PointF(normalizedX, normalizedY);
+
+                    // Update cursor position
+                    gestureActions.updateCursorPosition(normalizedX, normalizedY);
+                    Log.v(TAG, String.format("Updating cursor position: (%.3f, %.3f)", normalizedX, normalizedY));
+                }
+
+                // In cursor mode, only detect tap gestures and cursor toggle
+                String cursorModeGesture = detectCursorModeGestures(landmarks);
+                if (cursorModeGesture != null && !cursorModeGesture.equals("none")) {
+                    Log.i(TAG, "Cursor mode gesture detected: " + cursorModeGesture);
+                    if (gestureModule != null) {
+                        processHandler.post(() -> {
+                            Log.i(TAG, "Emitting cursor mode gesture: " + cursorModeGesture);
+                            gestureModule.sendEvent(cursorModeGesture);
+                        });
+                    }
+                }
+                return; // Don't process regular gestures in cursor mode
+            }
+
+            // Regular gesture detection (when not in cursor mode)
             String detectedGesture = classifyGesture(landmarks);
 
             if (detectedGesture != null && !detectedGesture.equals("none")) {
@@ -215,6 +337,99 @@ public class GestureService extends Service {
             Log.e(TAG, "Error detecting gesture: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    private String detectCursorModeGestures(NormalizedLandmarkList landmarks) {
+        if (landmarks.getLandmarkList().size() < 21) {
+            return "none";
+        }
+
+        try {
+            List<NormalizedLandmark> points = landmarks.getLandmarkList();
+            long currentTime = System.currentTimeMillis();
+
+            // Get finger states
+            boolean isIndex = isFingerExtended(points, 5, 8); // Index finger
+            boolean isMiddle = isFingerExtended(points, 9, 12); // Middle finger
+            boolean isRing = isFingerExtended(points, 13, 16); // Ring finger
+            boolean isPinky = isFingerExtended(points, 17, 20); // Pinky finger
+            boolean isThumb = isThumbExtended(points);
+
+            // Count extended fingers
+            int extendedFingers = 0;
+            if (isIndex)
+                extendedFingers++;
+            if (isMiddle)
+                extendedFingers++;
+            if (isRing)
+                extendedFingers++;
+            if (isPinky)
+                extendedFingers++;
+            if (isThumb)
+                extendedFingers++;
+
+            Log.v(TAG,
+                    String.format(
+                            "Cursor mode - Finger states - Index:%s, Middle:%s, Ring:%s, Pinky:%s, Thumb:%s (Total:%d)",
+                            isIndex, isMiddle, isRing, isPinky, isThumb, extendedFingers));
+
+            // Cursor mode gestures:
+
+            // 1. Fist (closed hand) - tap at cursor
+            if (extendedFingers == 0) {
+                return confirmCursorGesture("tap_at_cursor", currentTime);
+            }
+
+            // 2. Pinky only - toggle cursor (close cursor)
+            if (isPinky && !isIndex && !isMiddle && !isRing && !isThumb) {
+                return confirmCursorGesture("cursor", currentTime);
+            }
+
+            return "none";
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in cursor mode gesture detection: " + e.getMessage());
+            return "none";
+        }
+    }
+
+    private String confirmCursorGesture(String gesture, long currentTime) {
+        // Shorter cooldown for cursor gestures to be more responsive
+        if (currentTime - lastGestureTime < 800) {
+            return "none";
+        }
+
+        if (gesture.equals("none")) {
+            candidateGesture = "none";
+            gestureConfirmationCount = 0;
+            return "none";
+        }
+
+        // For tap gesture, require confirmation to avoid accidental taps
+        if (gesture.equals("tap_at_cursor")) {
+            if (gesture.equals(candidateGesture)) {
+                gestureConfirmationCount++;
+            } else {
+                candidateGesture = gesture;
+                gestureConfirmationCount = 1;
+            }
+
+            if (gestureConfirmationCount >= 2) { // Require 2 frames of confirmation
+                lastGestureTime = currentTime;
+                lastGesture = gesture;
+                gestureConfirmationCount = 0;
+                candidateGesture = "none";
+                Log.i(TAG, "🎯 CURSOR TAP CONFIRMED");
+                return gesture;
+            }
+            return "none";
+        }
+
+        // For other cursor gestures, confirm immediately
+        lastGestureTime = currentTime;
+        lastGesture = gesture;
+        Log.i(TAG, "🎯 CURSOR GESTURE CONFIRMED: " + gesture);
+        return gesture;
     }
 
     private String classifyGesture(NormalizedLandmarkList landmarks) {
@@ -332,6 +547,14 @@ public class GestureService extends Service {
             lastGestureTime = currentTime;
             lastGesture = gesture;
             Log.i(TAG, "🎯 MOVEMENT GESTURE DETECTED: " + gesture);
+            return gesture;
+        }
+
+        // For cursor-related gestures, require immediate confirmation
+        if (gesture.equals("cursor")) {
+            lastGestureTime = currentTime;
+            lastGesture = gesture;
+            Log.i(TAG, "🎯 CURSOR GESTURE DETECTED");
             return gesture;
         }
 
@@ -626,6 +849,19 @@ public class GestureService extends Service {
     public void onDestroy() {
         isProcessing = false;
         stopCamera();
+
+        // Ensure cursor is closed when service is destroyed
+        if (gestureActions != null && isCursorMode) {
+            try {
+                // Try to close cursor directly through GestureActions
+                gestureActions.updateCursorPosition(-1, -1); // Signal to hide cursor
+                isCursorMode = false;
+                Log.i(TAG, "Cursor mode disabled on service destroy");
+            } catch (Exception e) {
+                Log.e(TAG, "Error closing cursor on service destroy: " + e.getMessage());
+            }
+        }
+
         if (backgroundThread != null) {
             backgroundThread.quitSafely();
             try {
@@ -639,6 +875,14 @@ public class GestureService extends Service {
         if (hands != null) {
             hands.close();
         }
+
+        // Unregister broadcast receiver
+        try {
+            unregisterReceiver(cursorModeReceiver);
+        } catch (Exception e) {
+            Log.e(TAG, "Error unregistering cursor mode receiver: " + e.getMessage());
+        }
+
         super.onDestroy();
     }
 

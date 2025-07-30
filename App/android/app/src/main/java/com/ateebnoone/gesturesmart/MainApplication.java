@@ -22,6 +22,7 @@ import java.util.List;
 
 import com.ateebnoone.gesturesmart.GesturePackage;
 import com.ateebnoone.gesturesmart.GestureActionsPackage;
+import com.ateebnoone.gesturesmart.VoiceServicePackage;
 
 public class MainApplication extends Application implements ReactApplication {
   private final ReactNativeHost mReactNativeHost = new ReactNativeHostWrapper(
@@ -37,8 +38,14 @@ public class MainApplication extends Application implements ReactApplication {
           @SuppressWarnings("UnnecessaryLocalVariable")
           List<ReactPackage> packages = new PackageList(this).getPackages();
           // Packages that cannot be autolinked yet can be added manually here
-          packages.add(new GesturePackage()); // Add our gesture package
-          packages.add(new GestureActionsPackage()); // Add our gesture actions package
+          try {
+            packages.add(new GesturePackage());
+            packages.add(new GestureActionsPackage());
+            packages.add(new VoiceServicePackage());
+          } catch (Exception e) {
+            // Log the error but don't crash
+            e.printStackTrace();
+          }
           return packages;
         }
 

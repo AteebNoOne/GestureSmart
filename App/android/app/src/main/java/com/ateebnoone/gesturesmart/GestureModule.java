@@ -94,6 +94,17 @@ public class GestureModule extends ReactContextBaseJavaModule {
                 params.putString("gesture", gestureType);
                 params.putDouble("timestamp", System.currentTimeMillis());
 
+                if ("tap_at_cursor".equals(gestureType)) {
+                    // Get GestureActions instance and perform tap
+                    GestureActions gestureActions = getGestureActionsInstance();
+                    if (gestureActions != null) {
+                        gestureActions.performTapAtCursor();
+                        Log.i(TAG, "Executed tap at cursor");
+                    } else {
+                        Log.e(TAG, "GestureActions instance not available for tap at cursor");
+                    }
+                }
+
                 reactContext
                         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
                         .emit(EVENT_NAME, params);
@@ -104,6 +115,18 @@ public class GestureModule extends ReactContextBaseJavaModule {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error sending gesture event: " + e.getMessage());
+        }
+    }
+
+    // Add method to get GestureActions instance
+    private GestureActions getGestureActionsInstance() {
+        try {
+            // You might need to store a static reference to GestureActions
+            // or get it through the React Native bridge
+            return GestureActionsHolder.getInstance();
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting GestureActions instance: " + e.getMessage());
+            return null;
         }
     }
 
@@ -127,6 +150,18 @@ public class GestureModule extends ReactContextBaseJavaModule {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error sending hand detection event: " + e.getMessage());
+        }
+    }
+
+    public static class GestureActionsHolder {
+        private static GestureActions instance;
+
+        public static void setInstance(GestureActions gestureActions) {
+            instance = gestureActions;
+        }
+
+        public static GestureActions getInstance() {
+            return instance;
         }
     }
 

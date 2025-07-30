@@ -11,6 +11,7 @@ interface GestureActionsType {
   goBack(): Promise<boolean>;
   goHome(): Promise<boolean>;
   showRecentApps(): Promise<boolean>;
+  cursor(): Promise<boolean>;
   requestAccessibilityPermission(): Promise<boolean>;
 }
 
@@ -94,6 +95,18 @@ export const handleReturn = async (): Promise<void> => {
   if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
     try {
       await GestureActions.goBack();
+    } catch (error) {
+      console.error('Error performing scroll down:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
+  }
+};
+
+export const handleCursor = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.cursor();
     } catch (error) {
       console.error('Error performing scroll down:', error);
       // If permission is needed, request it

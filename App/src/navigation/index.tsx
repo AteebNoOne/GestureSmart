@@ -10,7 +10,7 @@ import { AuthStackParamList, MainDrawerParamList, RootStackParamList } from '../
 import { ThemeProvider } from '../context/ThemeContex';
 import { ThemeType } from '../constants/theme';
 
-import GestureService from '../screens/GestureServiceScreen';
+// import GestureService from '../screens/GestureServiceScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { SignupScreen } from '../screens/SignupScreen';
 import { MenuScreen } from '../screens/MenuScreen';
@@ -21,11 +21,10 @@ import { AboutScreen } from '../screens/AboutScreen';
 import { TermsConditionsScreen } from '../screens/TermsConditionsScreen';
 import { PrivacyPolicyScreen } from '../screens/PrivacyPolicyScreen';
 import { HomeScreen } from '../screens/HomeScreen';
-import EyeTrackingService from '../screens/EyeTrackingScreen';
+// import EyeTrackingService from '../screens/EyeTrackingScreen';
 import VoiceService from '../screens/VoiceServiceScreen';
 import EyeTracking from '../screens/EyeTracking';
 import GestureServiceNative from '../screens/GestureServiceScreenNative';
-// import VoiceService from '../screens/VoiceServiceScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();

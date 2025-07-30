@@ -4,6 +4,7 @@ export type RootStackParamList = {
 };
 
 export type AuthStackParamList = {
+  Voice: undefined;
   Login: undefined;
   Signup: undefined;
   Detection: undefined;

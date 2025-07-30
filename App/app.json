@@ -15,7 +15,19 @@
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
         }
       ],
-      ["@react-native-voice/voice"],
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "CUSTOM: Allow $(PRODUCT_NAME) to access the microphone",
+          "speechRecognitionPermission": "CUSTOM: Allow $(PRODUCT_NAME) to securely recognize user speech"
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
+        }
+      ],
       [
         "expo-notifications",
         {
@@ -31,12 +43,21 @@
           "backgroundColor": "#FFFFFF"
         }
       ],
-      "expo-build-properties"
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": false,
+            "enableShrinkResourcesInReleaseBuilds": false
+          }
+        }
+      ]
     ],
     "android": {
       "package": "com.ateebnoone.gesturesmart",
       "permissions": [
         "CAMERA",
+        "RECORD_AUDIO",
         "SYSTEM_ALERT_WINDOW",
         "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
         "BIND_ACCESSIBILITY_SERVICE",
@@ -58,6 +79,7 @@
       "bundleIdentifier": "com.ateebnoone.gesturesmart",
       "infoPlist": {
         "NSCameraUsageDescription": "This app needs camera access to detect hand gestures",
+        "NSMicrophoneUsageDescription": "This app needs microphone access for voice commands",
         "UIBackgroundModes": [
           "processing",
           "fetch",
