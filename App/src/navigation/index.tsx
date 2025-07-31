@@ -32,6 +32,8 @@ const Drawer = createDrawerNavigator<MainDrawerParamList>();
 
 const AuthNavigator = () => (
   <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+    {/* <AuthStack.Screen name="Login" component={FingerTrackingScreen} /> */}
+
     <AuthStack.Screen name="Login" component={LoginScreen} />
     <AuthStack.Screen name="Signup" component={SignupScreen} />
     <AuthStack.Screen name="Detection" component={GestureServiceNative} />
@@ -99,9 +101,10 @@ const DrawerNavigator = () => (
     />
     <Drawer.Screen
       name="VoiceServiceScreen"
-      component={VoiceService}
+      component={() => <VoiceService apiKey='77955c73bf114d379a9047c6525e0d58' />}
       options={{ title: 'VoiceServiceScreen' }}
     />
+
 
 
   </Drawer.Navigator>

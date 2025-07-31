@@ -1,3 +1,4 @@
+import { Alert } from 'react-native';
 import { NativeModules, Platform } from 'react-native';
 
 
@@ -13,6 +14,10 @@ interface GestureActionsType {
   showRecentApps(): Promise<boolean>;
   cursor(): Promise<boolean>;
   requestAccessibilityPermission(): Promise<boolean>;
+  openApp(appName: string): Promise<string>;
+  continuousScrollDown(): Promise<boolean>;
+  continuousScrollUp(): Promise<boolean>;
+  stopScrolling(): Promise<boolean>;
 }
 
 const GestureActions = NativeModules.GestureActions as GestureActionsType;
@@ -79,6 +84,42 @@ export const handleScrollUp = async (): Promise<void> => {
   }
 };
 
+export const handleContinuousScrollUp = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.continuousScrollUp();
+    } catch (error) {
+      console.error('Error performing scroll up:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
+  }
+};
+
+export const handleStopScrolling = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.stopScrolling();
+    } catch (error) {
+      console.error('Error performing scroll up:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
+  }
+};
+
+export const handleContinuousScrollDown = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.continuousScrollDown();
+    } catch (error) {
+      console.error('Error performing scroll up:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
+  }
+};
+
 export const handleScrollDown = async (): Promise<void> => {
   if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
     try {
@@ -100,6 +141,49 @@ export const handleReturn = async (): Promise<void> => {
       // If permission is needed, request it
       await requestAccessibilityPermission();
     }
+  }
+};
+
+export const handlegoHome = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.goHome();
+    } catch (error) {
+      console.error('Error performing scroll down:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
+  }
+};
+
+export const handleShowRecentApps = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.showRecentApps();
+    } catch (error) {
+      console.error('Error performing scroll down:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
+  }
+};
+
+export const handleOpenApp = async (appName: string): Promise<void> => {
+  console.log("Open app called!!")
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      const result = await GestureActions.openApp(appName);
+      console.log('App open result:', result);
+    } catch (error: any) {
+      console.error('Error opening app:', error?.message || error);
+      if (error?.code === 'APP_NOT_FOUND') {
+        Alert.alert('App Not Found', `Can't find app "${appName}"`);
+      } else {
+        await requestAccessibilityPermission(); // If needed
+      }
+    }
+  } else {
+    console.warn('GestureActions module not available or unsupported platform.');
   }
 };
 

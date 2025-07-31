@@ -1,862 +1,763 @@
-import React, { useEffect, useState, useRef } from 'react';
-import {
-  StyleSheet,
-  View,
-  Text,
-  TouchableOpacity,
-  AppState,
-  Animated,
-  SafeAreaView,
-  ActivityIndicator,
-  Image,
-  Platform,
-} from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Alert, Platform, AppState, AppStateStatus } from 'react-native';
 import * as Speech from 'expo-speech';
-import { Audio } from 'expo-av';
-import { activateKeepAwake, deactivateKeepAwake } from 'expo-keep-awake';
-import * as BackgroundFetch from 'expo-background-fetch';
-import * as TaskManager from 'expo-task-manager';
-import * as Notifications from 'expo-notifications';
-import { responsiveFontSize, responsiveHeight, responsiveWidth } from 'react-native-responsive-dimensions';
-import { useTheme } from '../hooks/useTheme';
-import { typography } from '../constants/theme';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { NavigationProp } from '@react-navigation/native';
+import AudioRecord from 'react-native-audio-record';
+import { Buffer } from 'buffer';
+import { handleContinuousScrollDown, handleContinuousScrollUp, handlegoHome, handleOpenApp, handleReturn, handleScrollDown, handleScrollUp, handleShowRecentApps, handleStopScrolling, handleSwipeLeft, handleSwipeRight, handleTap } from '../features/actions';
+import BackgroundService from 'react-native-background-actions'; // Add this package
 
-interface CommandConfig {
-  [key: string]: {
-    label: string;
-    imagePath: any;
-    action: () => void;
-  };
+interface VoiceServiceProps {
+  apiKey?: string;
 }
 
-interface TranscriptTurn {
+interface V3Message {
+  type: string;
+  id?: string;
+  expires_at?: number;
   transcript?: string;
-  isFormatted?: boolean;
+  turn_is_formatted?: boolean;
+  audio_duration_seconds?: number;
+  session_duration_seconds?: number;
+  end_of_turn?: boolean;
+  confidence?: number;
 }
 
-// AssemblyAI Configuration - Following SDK pattern
-const ASSEMBLYAI_CONFIG = {
-  apiKey: '77955c73bf114d379a9047c6525e0d58',
-  sampleRate: 16000,
-  formatTurns: true,
-  channels: 1,
-};
-
-const BACKGROUND_TASK_NAME = 'VOICE_DETECTION';
-const NOTIFICATION_ID = 'voice-service-notification';
-
-// Configure notifications
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: false,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
-
-// Register background task
-TaskManager.defineTask(BACKGROUND_TASK_NAME, async ({ data, error }) => {
-  if (error) {
-    console.error('Background task error:', error);
-    return BackgroundFetch.BackgroundFetchResult.Failed;
-  }
-
-  try {
-    await showForegroundNotification();
-    return BackgroundFetch.BackgroundFetchResult.NewData;
-  } catch (e) {
-    console.error('Background task execution error:', e);
-    return BackgroundFetch.BackgroundFetchResult.Failed;
-  }
-});
-
-const showForegroundNotification = async () => {
-  await Notifications.setNotificationChannelAsync('voice-service', {
-    name: 'Voice Service',
-    importance: Notifications.AndroidImportance.LOW,
-    vibrationPattern: [0, 0, 0],
-    lightColor: '#FF231F7C',
-  });
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: 'Voice Command Service Active',
-      body: 'Running in background mode',
-      priority: 'low',
-    },
-    trigger: null,
-    identifier: NOTIFICATION_ID,
-  });
-};
-
-// SDK-like Streaming Transcriber Class
-class StreamingTranscriber {
-  private ws: WebSocket | null = null;
-  private isConnected = false;
-  private sessionId: string | null = null;
-  private eventHandlers: { [key: string]: Function[] } = {};
-
-  constructor(private config: typeof ASSEMBLYAI_CONFIG) { }
-
-  // Event emitter methods - following SDK pattern
-  on(event: string, handler: Function) {
-    if (!this.eventHandlers[event]) {
-      this.eventHandlers[event] = [];
-    }
-    this.eventHandlers[event].push(handler);
-  }
-
-  private emit(event: string, ...args: any[]) {
-    if (this.eventHandlers[event]) {
-      this.eventHandlers[event].forEach(handler => handler(...args));
-    }
-  }
-
-  async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const queryParams = new URLSearchParams({
-        sample_rate: this.config.sampleRate.toString(),
-        format_turns: this.config.formatTurns.toString(),
-      });
-
-      const wsUrl = `wss://streaming.assemblyai.com/v3/ws?${queryParams.toString()}`;
-
-      this.ws = new WebSocket(wsUrl, [], {
-        headers: {
-          'Authorization': this.config.apiKey,
-        },
-      });
-
-      const timeout = setTimeout(() => {
-        this.ws?.close();
-        reject(new Error('Connection timeout'));
-      }, 10000);
-
-      this.ws.onopen = () => {
-        clearTimeout(timeout);
-        this.isConnected = true;
-        console.log('Connected to streaming transcript service');
-        resolve();
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          this.handleMessage(data);
-        } catch (error) {
-          console.error('Error parsing message:', error);
-          this.emit('error', error);
-        }
-      };
-
-      this.ws.onerror = (error) => {
-        clearTimeout(timeout);
-        console.error('WebSocket error:', error);
-        this.emit('error', error);
-        reject(error);
-      };
-
-      this.ws.onclose = (event) => {
-        clearTimeout(timeout);
-        this.isConnected = false;
-        console.log('Session closed:', event.code, event.reason);
-        this.emit('close', event.code, event.reason);
-      };
-    });
-  }
-
-  private handleMessage(data: any) {
-    const msgType = data.type;
-
-    if (msgType === 'Begin') {
-      this.sessionId = data.id;
-      const expiresAt = data.expires_at;
-      console.log(`Session opened with ID: ${this.sessionId}`);
-      this.emit('open', { id: this.sessionId, expiresAt });
-    } else if (msgType === 'Turn') {
-      const transcript = data.transcript || '';
-      const isFormatted = data.turn_is_formatted;
-
-      if (transcript) {
-        const turn: TranscriptTurn = {
-          transcript,
-          isFormatted
-        };
-
-        console.log('Turn:', transcript, isFormatted ? '(formatted)' : '(partial)');
-        this.emit('turn', turn);
-      }
-    } else if (msgType === 'Termination') {
-      const audioDuration = data.audio_duration_seconds;
-      const sessionDuration = data.session_duration_seconds;
-      console.log(`Session terminated: Audio=${audioDuration}s, Session=${sessionDuration}s`);
-      this.emit('termination', { audioDuration, sessionDuration });
-    }
-  }
-
-  // Send audio data - following SDK stream pattern
-  sendAudio(audioData: Uint8Array) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(audioData);
-    }
-  }
-
-  async close(): Promise<void> {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      // Send termination message
-      const terminateMessage = { type: 'Terminate' };
-      console.log('Closing streaming transcript connection');
-      this.ws.send(JSON.stringify(terminateMessage));
-    }
-
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-
-    this.isConnected = false;
-    this.sessionId = null;
-  }
-
-  get connected(): boolean {
-    return this.isConnected;
-  }
-}
-
-interface VoiceScreenProps {
-  navigation: NavigationProp<any>;
-}
-
-const VoiceService: React.FC<VoiceScreenProps> = ({ navigation }) => {
-  const appState = useRef(AppState.currentState);
-  const processingRef = useRef<boolean>(false);
-  const keepAwakeRef = useRef<boolean>(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const { colors } = useTheme();
-
-  // Audio recording refs
-  const recordingRef = useRef<Audio.Recording | null>(null);
-  const transcriberRef = useRef<StreamingTranscriber | null>(null);
-  const isRecordingRef = useRef(false);
-  const audioStreamIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const isStreamingRef = useRef(false);
-
-  const [currentCommand, setCurrentCommand] = useState<string>('none');
+const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
   const [isListening, setIsListening] = useState(false);
-  const [lastHeard, setLastHeard] = useState<string>('');
+  const [lastDetected, setLastDetected] = useState<string>('');
+  const [transcript, setTranscript] = useState<string>('');
+  const [partialTranscript, setPartialTranscript] = useState<string>('');
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [sessionId, setSessionId] = useState<string>('');
-  const [state, setState] = useState<{
-    isRunning: boolean;
-    isInitialized: boolean;
-    status: 'initializing' | 'stopped' | 'running' | 'error';
-  }>({
-    isRunning: false,
-    isInitialized: false,
-    status: 'initializing',
-  });
+  const [restartAttempt, setRestartAttempt] = useState(0);
+  const wsRef = useRef<WebSocket | null>(null);
+  const isRecordingRef = useRef<boolean>(false);
+  const dataListenerRef = useRef<any>(null);
+  const audioBufferRef = useRef<Uint8Array>(new Uint8Array(0)); // Buffer for accumulating audio data
+  const bufferSizeRef = useRef<number>(0); // Track current buffer size
+  const appStateRef = useRef(AppState.currentState);
+  const restartPendingRef = useRef(false);
+  const ASSEMBLY_AI_API_KEY = apiKey || "YOUR_API_KEY";
 
-  const commandConfigs: CommandConfig = {
-    'swipe right': {
-      label: 'Swipe Right',
-      imagePath: require('../assets/gestures/swipe_right.png'),
-      action: () => console.log('Swipe right')
+  const backgroundTaskOptions = {
+    taskName: 'VoiceCommandService',
+    taskTitle: 'Voice Command Service',
+    taskDesc: 'Listening for voice commands',
+    taskIcon: {
+      name: 'ic_launcher',
+      type: 'mipmap',
     },
-    'swipe left': {
-      label: 'Swipe Left',
-      imagePath: require('../assets/gestures/swipe_left.png'),
-      action: () => console.log('Swipe left')
+    color: '#4CAF50',
+    parameters: {
+      delay: 1000,
     },
-    'tap': {
-      label: 'Tap',
-      imagePath: require('../assets/gestures/tap.png'),
-      action: () => console.log('Tap')
-    },
-    'scroll up': {
-      label: 'Scroll Up',
-      imagePath: require('../assets/gestures/scroll_up.png'),
-      action: () => console.log('Scroll up')
-    },
-    'scroll down': {
-      label: 'Scroll Down',
-      imagePath: require('../assets/gestures/scroll_down.png'),
-      action: () => console.log('Scroll down')
-    }
   };
 
-  // Initialize Audio
+  // Audio recording configuration for PCM16 16kHz
+  const audioOptions = {
+    sampleRate: 16000,
+    channels: 1,
+    bitsPerSample: 16,
+    audioSource: 6, // VOICE_RECOGNITION for Android
+    wavFile: 'audio.wav',
+  };
+
+  const targetWords = ['stop', 'open app', 'tap', 'swipe left', 'swipe right', 'continuous scroll up', 'scroll up', 'continuous scroll down', 'scroll down', 'stop scrolling', 'go home', 'show recent apps', 'go back'];
+
+  // Calculate required buffer size for 50ms of audio (minimum required by AssemblyAI)
+  const SAMPLES_PER_50MS = (16000 * 0.05) * 2; // 1600 bytes (16000 samples/sec * 0.05s * 2 bytes/sample)
+
+  const speechTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastCommandRef = useRef({ phrase: '', timestamp: 0 });
+
   useEffect(() => {
-    const initializeAudio = async () => {
+    // Setup background service
+    const setupBackgroundService = async () => {
       try {
-        const { granted } = await Audio.requestPermissionsAsync();
-        if (!granted) {
-          console.error('Audio permission not granted');
-          setState(prev => ({ ...prev, status: 'error' }));
-          return;
-        }
-
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
-        });
-
-        setState(prev => ({
-          ...prev,
-          isInitialized: true,
-          status: 'stopped'
-        }));
-      } catch (e) {
-        console.error('Audio initialization error:', e);
-        setState(prev => ({ ...prev, status: 'error' }));
+        await BackgroundService.start(async () => {
+          // This keeps the background service alive
+          return new Promise<void>(() => { });
+        }, backgroundTaskOptions);
+        console.log('✅ Background service initialized');
+      } catch (error) {
+        console.error('❌ Background service init error:', error);
       }
     };
 
-    initializeAudio();
+    setupBackgroundService();
 
     return () => {
-      cleanup();
+      BackgroundService.stop();
     };
   }, []);
 
-  // Create and setup transcriber - following SDK pattern
-  const createTranscriber = (): StreamingTranscriber => {
-    const transcriber = new StreamingTranscriber(ASSEMBLYAI_CONFIG);
+  useEffect(() => {
+    const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+      console.log(`App state changed from ${appStateRef.current} to ${nextAppState}`);
 
-    // Setup event handlers - following SDK pattern
-    transcriber.on('open', ({ id }: { id: string }) => {
-      console.log(`Session opened with ID: ${id}`);
-      setSessionId(id);
-      setIsListening(true);
-    });
+      // App going to background - keep connection alive
+      if (appStateRef.current === 'active' &&
+        nextAppState.match(/inactive|background/)) {
+        console.log('App moving to background - maintaining connection');
 
-    transcriber.on('error', (error: any) => {
-      console.error('Transcriber error:', error);
-      setIsListening(false);
-    });
-
-    transcriber.on('close', (code: number, reason: string) => {
-      console.log('Session closed:', code, reason);
-      setIsListening(false);
-      setSessionId('');
-    });
-
-    // Handle transcript turns - following SDK pattern
-    transcriber.on('turn', (turn: TranscriptTurn) => {
-      if (!turn.transcript) {
-        return;
+        // Start background service explicitly
+        try {
+          await BackgroundService.updateNotification({
+            taskDesc: 'Listening for commands in background',
+          });
+        } catch (error) {
+          console.log('Background notification update error:', error);
+        }
       }
 
-      if (turn.isFormatted) {
-        // Final transcript
-        console.log('Turn:', turn.transcript);
-        setLastHeard(turn.transcript);
-        handleCommand(turn.transcript.toLowerCase());
-      } else {
-        // Partial transcript
-        setLastHeard(`${turn.transcript}...`);
+      // App coming to foreground
+      if (appStateRef.current.match(/inactive|background/) &&
+        nextAppState === 'active') {
+        console.log('App returned to foreground');
+
+        // Update notification
+        try {
+          await BackgroundService.updateNotification({
+            taskDesc: 'Listening for voice commands',
+          });
+        } catch (error) {
+          console.log('Foreground notification update error:', error);
+        }
       }
-    });
 
-    transcriber.on('termination', ({ audioDuration, sessionDuration }: any) => {
-      console.log(`Audio: ${audioDuration}s, Session: ${sessionDuration}s`);
-    });
+      appStateRef.current = nextAppState;
+    };
 
-    return transcriber;
-  };
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
 
-  // Start recording and streaming - following SDK pattern
-  const startRecording = async () => {
+    return () => subscription.remove();
+  }, []);
+
+  const restartAudioStreaming = async () => {
+    console.log("🔄 Attempting to restart audio streaming...");
+
     try {
-      if (isRecordingRef.current) {
-        console.log('Recording already in progress');
-        return;
+      // Stop any existing recording
+      stopAudioRecording();
+
+      // Clear WebSocket connection if exists
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
 
-      console.log('Starting recording');
+      // Reset state
+      audioBufferRef.current = new Uint8Array(0);
+      bufferSizeRef.current = 0;
+      setPartialTranscript('');
+      setTranscript('');
+      setSessionId('');
 
-      // Create transcriber and connect - following SDK pattern
-      transcriberRef.current = createTranscriber();
-      await transcriberRef.current.connect();
-
-      // Start continuous audio recording
-      await startContinuousRecording();
-
-      // Start streaming audio data
-      startAudioStreaming();
-
+      // Start new session - works in background
+      startListening();
     } catch (error) {
-      console.error('Error starting recording:', error);
-      setIsListening(false);
-      isRecordingRef.current = false;
+      console.error("❌ Failed to restart audio:", error);
+
+      // Retry after delay
+      setTimeout(() => {
+        if (isListening) restartAudioStreaming();
+      }, 2000);
     }
   };
 
-  const startContinuousRecording = async () => {
-    try {
-      // Clean up any existing recording
-      if (recordingRef.current) {
-        try {
-          await recordingRef.current.stopAndUnloadAsync();
-        } catch (e) {
-          console.log('Previous recording cleanup:', e.message);
-        }
-        recordingRef.current = null;
+  // Update your detectTargetWords function
+  const detectTargetWords = async (text: string) => {
+    if (!text) return null;
+
+    const normalizedText = text.toLowerCase().replace(/[^\w\s]/g, '');
+
+    // Check for "open <appname>" pattern - matches any app name after "open"
+    const openAppMatch = normalizedText.match(/^open\s+(.+)$/);
+    if (openAppMatch) {
+      const appName = openAppMatch[1].trim();
+
+      // Prevent duplicate execution
+      const now = Date.now();
+      if (lastCommandRef.current.phrase === `open ${appName}` &&
+        (now - lastCommandRef.current.timestamp < 3000)) {
+        return null;
       }
 
-      const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync({
-        android: {
-          extension: '.wav',
-          outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_DEFAULT,
-          audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_DEFAULT,
-          sampleRate: ASSEMBLYAI_CONFIG.sampleRate,
-          numberOfChannels: ASSEMBLYAI_CONFIG.channels,
-          bitRate: 128000,
-        },
-        ios: {
-          extension: '.wav',
-          audioQuality: Audio.RECORDING_OPTION_IOS_AUDIO_QUALITY_HIGH,
-          sampleRate: ASSEMBLYAI_CONFIG.sampleRate,
-          numberOfChannels: ASSEMBLYAI_CONFIG.channels,
-          bitRate: 128000,
-          linearPCMBitDepth: 16,
-          linearPCMIsBigEndian: false,
-          linearPCMIsFloat: false,
+      lastCommandRef.current = {
+        phrase: `open ${appName}`,
+        timestamp: now
+      };
+
+      setLastDetected(`open ${appName}`);
+
+      try {
+        // Pass the app display name to the native function
+        await handleOpenApp(appName);
+        await Speech.speak(`Opening ${appName}`, {
+          language: 'en',
+          pitch: 1.0,
+          rate: 1.0,
+        });
+      } catch (error) {
+        console.error('Error opening app:', error);
+
+        // Handle specific error cases
+        let errorMessage = `Failed to open ${appName}`;
+        if (error.message.includes('APP_NOT_FOUND')) {
+          errorMessage = `App ${appName} not found`;
+        }
+
+        await Speech.speak(errorMessage, {
+          language: 'en',
+          pitch: 1.0,
+          rate: 1.0,
+        });
+      }
+      return `open ${appName}`;
+    }
+
+    // Existing command handling
+    for (const phrase of targetWords) {
+      const normalizedPhrase = phrase.toLowerCase().replace(/[^\w\s]/g, '');
+
+      // Skip if we just executed this command
+      const now = Date.now();
+      if (lastCommandRef.current.phrase === normalizedPhrase &&
+        (now - lastCommandRef.current.timestamp < 3000)) {
+        continue;
+      }
+
+      if (normalizedText.includes(normalizedPhrase)) {
+        // Update last command
+        lastCommandRef.current = {
+          phrase: normalizedPhrase,
+          timestamp: now
+        };
+
+        setLastDetected(phrase);
+
+        try {
+          switch (phrase) {
+            case "tap":
+              await handleTap(0, 0);
+              break;
+            case "swipe left":
+              await handleSwipeLeft();
+              break;
+            case "swipe right":
+              await handleSwipeRight();
+              break;
+            case "scroll up":
+              await handleScrollUp();
+              break;
+            case "continuous scroll up":
+              await handleContinuousScrollUp();
+              break;
+
+            case "scroll down":
+              await handleScrollDown();
+              break;
+            case "continuous scroll down":
+              await handleContinuousScrollDown();
+              break;
+            case "stop scrolling":
+              await handleStopScrolling();
+              break;
+            case "go home":
+              await handlegoHome();
+              break;
+            case "show recent apps":
+              await handleShowRecentApps();
+              break;
+            case "go back":
+              await handleReturn();
+              break;
+            default:
+              break;
+          }
+
+          // Speak feedback
+          await Speech.speak(`${phrase} detected`, {
+            language: 'en',
+            pitch: 1.0,
+            rate: 1.0,
+          });
+        } catch (error) {
+          console.error('Command execution error:', error);
+        }
+
+        return phrase;
+      }
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    if (restartAttempt > 0) {
+      console.log("🚀 Restarting audio system...");
+      startListening();
+    }
+  }, [restartAttempt]);
+
+  const formatTimestamp = (timestamp: number) => {
+    return new Date(timestamp * 1000).toISOString();
+  };
+
+  const base64ToUint8Array = (base64: string): Uint8Array => {
+    return new Uint8Array(Buffer.from(base64, 'base64'));
+  };
+
+  const startListening = async () => {
+    if (!ASSEMBLY_AI_API_KEY) {
+      Alert.alert('Error', 'AssemblyAI API key is required');
+      return;
+    }
+
+    try {
+      setConnectionStatus('connecting');
+      audioBufferRef.current = new Uint8Array(0);
+      bufferSizeRef.current = 0;
+
+      // Initialize audio recording
+      AudioRecord.init(audioOptions);
+      console.log('✅ Audio recording initialized');
+
+      // Build V3 WebSocket URL with optimized parameters
+      const queryParams = new URLSearchParams({
+        sample_rate: '16000',
+        encoding: 'pcm_s16le',
+        format_turns: 'false',
+      });
+
+      const wsUrl = `wss://streaming.assemblyai.com/v3/ws?${queryParams.toString()}`;
+      console.log('🔗 Connecting to:', wsUrl);
+
+      // Create WebSocket connection to AssemblyAI V3
+      const ws = new WebSocket(wsUrl, [], {
+        headers: {
+          'Authorization': ASSEMBLY_AI_API_KEY,
         },
       });
 
-      recordingRef.current = recording;
-      isRecordingRef.current = true;
-      isStreamingRef.current = true;
+      wsRef.current = ws;
 
-      await recording.startAsync();
-      console.log('Continuous recording started');
+      ws.onopen = async () => {
+        console.log('✅ WebSocket connection opened to AssemblyAI V3');
+        setConnectionStatus('connected');
+        setIsListening(true);
+
+        // Start audio recording
+        AudioRecord.start();
+        console.log('🎤 Audio recording started');
+        isRecordingRef.current = true;
+
+        // Setup audio data listener
+        dataListenerRef.current = AudioRecord.on('data', (base64Data: string) => {
+          if (!isRecordingRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+          try {
+            // Convert base64 to Uint8Array (raw PCM)
+            const newData = base64ToUint8Array(base64Data);
+
+            // Add new data to buffer
+            const tempBuffer = new Uint8Array(bufferSizeRef.current + newData.length);
+            tempBuffer.set(audioBufferRef.current);
+            tempBuffer.set(newData, bufferSizeRef.current);
+            audioBufferRef.current = tempBuffer;
+            bufferSizeRef.current += newData.length;
+
+            // Send chunks when we have at least 50ms of audio
+            while (bufferSizeRef.current >= SAMPLES_PER_50MS) {
+              const chunkToSend = audioBufferRef.current.slice(0, SAMPLES_PER_50MS);
+
+              // Send to WebSocket
+              ws.send(chunkToSend.buffer);
+
+              // Remove sent data from buffer
+              const remaining = bufferSizeRef.current - SAMPLES_PER_50MS;
+              const temp = new Uint8Array(remaining);
+              temp.set(audioBufferRef.current.subarray(SAMPLES_PER_50MS));
+              audioBufferRef.current = temp;
+              bufferSizeRef.current = remaining;
+            }
+          } catch (error) {
+            console.error('❌ Error processing audio data:', error);
+          }
+        });
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data: V3Message = JSON.parse(event.data);
+          const msgType = data.type;
+          console.log('📨 Received message:', msgType, data);
+
+          if (msgType === 'Begin') {
+            const sessionId = data.id || '';
+            const expiresAt = data.expires_at;
+            setSessionId(sessionId);
+            setTranscript('');
+            setPartialTranscript('');
+            console.log(`🚀 Session began: ID=${sessionId}, ExpiresAt=${expiresAt ? formatTimestamp(expiresAt) : 'N/A'}`);
+          }
+          else if (msgType === 'Turn') {
+            const transcriptText = data.transcript || '';
+            const isFormatted = data.turn_is_formatted || false;
+            const endOfTurn = data.end_of_turn || false;
+
+            if (!isFormatted) {
+              // Unformatted transcript (partial)
+              setPartialTranscript(transcriptText);
+              detectTargetWords(transcriptText);
+            } else {
+              // Formatted transcript (final)
+              setTranscript(prev => prev ? `${prev} ${transcriptText}` : transcriptText);
+              setPartialTranscript('');
+              detectTargetWords(transcriptText);
+            }
+          }
+          else if (msgType === 'Termination') {
+            const audioDuration = data.audio_duration_seconds || 0;
+            const sessionDuration = data.session_duration_seconds || 0;
+            console.log(`🛑 Session Terminated: Audio Duration=${audioDuration}s, Session Duration=${sessionDuration}s`);
+            setConnectionStatus('disconnected');
+            setIsListening(false);
+          }
+        } catch (error) {
+          console.error('❌ Error handling message:', error);
+          console.error('Message data:', event.data);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
+        Alert.alert('Connection Error', 'Failed to connect to AssemblyAI V3');
+        setConnectionStatus('disconnected');
+        stopAudioRecording();
+      };
+
+      ws.onclose = (event) => {
+        console.log(`🔌 WebSocket Disconnected: Status=${event.code}, Reason=${event.reason}`);
+        setConnectionStatus('disconnected');
+        setIsListening(false);
+        stopAudioRecording();
+      };
 
     } catch (error) {
-      console.error('Error starting continuous recording:', error);
-      isRecordingRef.current = false;
-      isStreamingRef.current = false;
+      console.error('❌ Error starting voice service:', error);
+      Alert.alert('Error', `Failed to start voice recognition: ${error.message}`);
+      setConnectionStatus('disconnected');
     }
   };
 
-  // Stream audio data - following SDK pattern
-  const startAudioStreaming = () => {
-    if (audioStreamIntervalRef.current) {
-      clearInterval(audioStreamIntervalRef.current);
-    }
+  const stopAudioRecording = () => {
+    if (isRecordingRef.current) {
+      console.log('🛑 Stopping audio recording...');
+      isRecordingRef.current = false;
 
-    // Stream audio chunks at regular intervals
-    audioStreamIntervalRef.current = setInterval(async () => {
-      if (!isStreamingRef.current || !transcriberRef.current?.connected || !recordingRef.current) {
-        return;
+      // Remove audio data listener
+      if (dataListenerRef.current) {
+        dataListenerRef.current.remove();
+        dataListenerRef.current = null;
       }
 
       try {
-        await streamAudioChunk();
+        AudioRecord.stop();
+        console.log('✅ Audio recording stopped');
       } catch (error) {
-        console.error('Error in audio streaming:', error);
-      }
-    }, 1000); // Stream every 1 second
-  };
-
-  const streamAudioChunk = async () => {
-    try {
-      if (!recordingRef.current || !transcriberRef.current?.connected || !isStreamingRef.current) {
-        return;
-      }
-
-      const status = await recordingRef.current.getStatusAsync();
-      if (!status.isRecording || status.durationMillis < 800) {
-        return; // Need minimum audio duration
-      }
-
-      // Stop current recording to get audio data
-      const uri = await recordingRef.current.stopAndUnloadAsync();
-      recordingRef.current = null;
-
-      // Send audio to transcriber - following SDK pattern
-      await sendAudioToTranscriber(uri);
-
-      // Restart recording for continuous streaming
-      if (isStreamingRef.current) {
-        await startContinuousRecording();
-      }
-
-    } catch (error) {
-      console.error('Error streaming audio chunk:', error);
-
-      // Try to recover
-      if (isStreamingRef.current) {
-        setTimeout(async () => {
-          try {
-            await startContinuousRecording();
-          } catch (restartError) {
-            console.error('Error restarting recording:', restartError);
-          }
-        }, 1000);
+        console.error('❌ Error stopping audio recording:', error);
       }
     }
   };
 
-  // Send audio to transcriber - following SDK pattern
-  const sendAudioToTranscriber = async (uri: string) => {
-    try {
-      if (!transcriberRef.current?.connected) {
-        return;
+  const stopListening = async () => {
+    console.log('🛑 Stopping listening...');
+    stopAudioRecording();
+
+    // Send termination message to V3 API
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        const terminateMessage = { type: 'Terminate' };
+        console.log('📤 Sending termination message:', terminateMessage);
+        wsRef.current.send(JSON.stringify(terminateMessage));
+      } catch (error) {
+        console.error('❌ Error sending termination message:', error);
       }
-
-      // Read audio file as binary data
-      const response = await fetch(uri);
-      const arrayBuffer = await response.arrayBuffer();
-      const audioData = new Uint8Array(arrayBuffer);
-
-      // Send to transcriber - following SDK pattern
-      transcriberRef.current.sendAudio(audioData);
-
-      console.log(`Streamed ${audioData.length} bytes to transcriber`);
-
-    } catch (error) {
-      console.error('Error sending audio to transcriber:', error);
-    }
-  };
-
-  const stopRecording = async () => {
-    try {
-      console.log('Stopping recording');
-
-      isStreamingRef.current = false;
-
-      // Clear streaming interval
-      if (audioStreamIntervalRef.current) {
-        clearInterval(audioStreamIntervalRef.current);
-        audioStreamIntervalRef.current = null;
-      }
-
-      // Stop and clean up recording
-      if (recordingRef.current && isRecordingRef.current) {
-        try {
-          await recordingRef.current.stopAndUnloadAsync();
-        } catch (e) {
-          console.log('Recording cleanup:', e.message);
-        }
-        recordingRef.current = null;
-      }
-
-      isRecordingRef.current = false;
-      setIsListening(false);
-
-    } catch (error) {
-      console.error('Error stopping recording:', error);
-    }
-  };
-
-  const handleCommand = (command: string) => {
-    console.log('Processing command:', command);
-
-    const matchedCommand = Object.keys(commandConfigs).find(key =>
-      command.includes(key)
-    );
-
-    if (matchedCommand) {
-      console.log('Matched command:', matchedCommand);
-      setCurrentCommand(matchedCommand);
-      commandConfigs[matchedCommand].action();
-
-      Speech.speak('Command recognized: ' + commandConfigs[matchedCommand].label, {
-        rate: 1.0,
-        pitch: 1.0,
-        language: 'en-US'
-      });
-    } else {
-      console.log('No command matched for:', command);
-    }
-  };
-
-  const cleanup = async () => {
-    await stopRecording();
-
-    // Close transcriber connection - following SDK pattern
-    if (transcriberRef.current) {
-      await transcriberRef.current.close();
-      transcriberRef.current = null;
     }
 
-    await safeDeactivateKeepAwake();
-    await Notifications.cancelScheduledNotificationAsync(NOTIFICATION_ID);
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    setIsListening(false);
+    setConnectionStatus('disconnected');
+    setSessionId('');
   };
 
-  // Animation effect for command display
   useEffect(() => {
-    if (currentCommand && currentCommand !== 'none') {
-      Animated.sequence([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(fadeAnim, {
-          toValue: 0.3,
-          duration: 500,
-          useNativeDriver: true,
-        })
-      ]).start();
-    }
-  }, [currentCommand]);
-
-  // Handle app state changes
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (
-        appState.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        if (state.isRunning) {
-          showForegroundNotification();
-        }
-      } else if (
-        appState.current === 'active' &&
-        nextAppState.match(/inactive|background/)
-      ) {
-        if (state.isRunning) {
-          processingRef.current = true;
-          showForegroundNotification();
-        }
-      }
-      appState.current = nextAppState;
-    });
-
     return () => {
-      subscription.remove();
-    };
-  }, [state.isRunning]);
-
-  const safeActivateKeepAwake = async () => {
-    if (!keepAwakeRef.current) {
-      await activateKeepAwake();
-      keepAwakeRef.current = true;
-    }
-  };
-
-  const safeDeactivateKeepAwake = async () => {
-    if (keepAwakeRef.current) {
-      await deactivateKeepAwake();
-      keepAwakeRef.current = false;
-    }
-  };
-
-  const toggleService = async () => {
-    try {
-      if (!state.isRunning) {
-        await showForegroundNotification();
-        await safeActivateKeepAwake();
-        processingRef.current = true;
-        await startRecording();
-      } else {
-        await cleanup();
-        processingRef.current = false;
+      stopListening();
+      if (speechTimeoutRef.current) {
+        clearTimeout(speechTimeoutRef.current);
       }
+    };
+  }, []);
 
-      setState(prev => ({
-        ...prev,
-        isRunning: !prev.isRunning,
-        status: !prev.isRunning ? 'running' : 'stopped'
-      }));
-    } catch (error) {
-      console.error('Error toggling service:', error);
+  const getStatusColor = () => {
+    switch (connectionStatus) {
+      case 'connected': return '#4CAF50';
+      case 'connecting': return '#FF9800';
+      default: return '#f44336';
     }
   };
 
-  const styles = StyleSheet.create({
-    safeArea: {
-      flex: 1,
-      backgroundColor: colors.background,
-    },
-    container: {
-      flex: 1,
-      paddingHorizontal: responsiveWidth(5),
-    },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingTop: Platform.OS === 'ios' ? responsiveHeight(2) : responsiveHeight(4),
-      marginBottom: responsiveHeight(3),
-    },
-    backButton: {
-      padding: responsiveWidth(2),
-      marginRight: responsiveWidth(2),
-    },
-    headerContent: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    headerText: {
-      fontSize: responsiveFontSize(3.2),
-      fontFamily: typography.fontFamily.bold,
-      color: colors.text,
-    },
-    commandContainer: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    commandText: {
-      fontSize: responsiveFontSize(2.5),
-      fontFamily: typography.fontFamily.medium,
-      color: colors.text,
-      marginBottom: responsiveHeight(2),
-    },
-    debugText: {
-      fontSize: responsiveFontSize(1.8),
-      fontFamily: typography.fontFamily.regular,
-      color: colors.textSecondary,
-      textAlign: 'center',
-      marginBottom: responsiveHeight(1),
-      fontStyle: 'italic',
-    },
-    sessionText: {
-      fontSize: responsiveFontSize(1.6),
-      fontFamily: typography.fontFamily.regular,
-      color: colors.textSecondary,
-      textAlign: 'center',
-      marginBottom: responsiveHeight(1),
-    },
-    commandImage: {
-      width: responsiveWidth(50),
-      height: responsiveWidth(50),
-      resizeMode: 'contain',
-    },
-    button: {
-      padding: 20,
-      borderRadius: 10,
-      width: '100%',
-      alignItems: 'center',
-      marginBottom: 20,
-    },
-    buttonStart: {
-      backgroundColor: '#4CAF50',
-    },
-    buttonStop: {
-      backgroundColor: '#f44336',
-    },
-    buttonText: {
-      color: 'white',
-      fontSize: 18,
-      fontWeight: 'bold',
-    },
-    status: {
-      marginVertical: 20,
-      fontSize: 16,
-      color: colors.textSecondary,
-      textAlign: 'center',
-    },
-    listeningIndicator: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 20,
-    },
-    listeningDot: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      backgroundColor: '#4CAF50',
-      marginRight: 10,
-    },
-    listeningText: {
-      fontSize: 16,
-      color: colors.text,
-    },
-  });
+  const getStatusText = () => {
+    switch (connectionStatus) {
+      case 'connected': return 'Connected & Streaming';
+      case 'connecting': return 'Connecting...';
+      default: return 'Disconnected';
+    }
+  };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}>
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={28}
-              color={colors.text}
-            />
-          </TouchableOpacity>
-          <View style={styles.headerContent}>
-            <Text style={styles.headerText}>Voice Commands</Text>
-          </View>
-        </View>
+    <View style={styles.container}>
+      <Text style={styles.title}>Voice Command Detection</Text>
+      <Text style={styles.subtitle}>AssemblyAI V3 + Real PCM Audio</Text>
 
-        {state.isRunning && (
-          <View style={styles.listeningIndicator}>
-            <View style={[
-              styles.listeningDot,
-              { opacity: isListening ? 1 : 0.3 }
-            ]} />
-            <Text style={styles.listeningText}>
-              {isListening ? 'Listening with AssemblyAI Streaming...' : 'Connecting...'}
-            </Text>
-          </View>
+      <View style={styles.statusContainer}>
+        <View style={[styles.statusIndicator, { backgroundColor: getStatusColor() }]} />
+        <Text style={styles.statusText}>{getStatusText()}</Text>
+      </View>
+
+      {sessionId && (
+        <View style={styles.sessionContainer}>
+          <Text style={styles.sessionText}>Session: {sessionId.slice(0, 8)}...</Text>
+        </View>
+      )}
+
+      <View style={styles.targetWordsContainer}>
+        <Text style={styles.sectionTitle}>Target Words:</Text>
+        <View style={styles.wordsRow}>
+          {targetWords.map((word) => (
+            <View
+              key={word}
+              style={[
+                styles.wordChip,
+                lastDetected === word && styles.wordChipActive
+              ]}
+            >
+              <Text style={[
+                styles.wordText,
+                lastDetected === word && styles.wordTextActive
+              ]}>
+                {word}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {lastDetected && (
+        <View style={styles.detectionContainer}>
+          <Text style={styles.detectionText}>
+            🎯 Last Detected: "{lastDetected}"
+          </Text>
+        </View>
+      )}
+
+      <View style={styles.transcriptContainer}>
+        <Text style={styles.sectionTitle}>Live Transcript:</Text>
+        <Text style={styles.transcript}>
+          {transcript || 'No speech detected...'}
+        </Text>
+        {partialTranscript && (
+          <Text style={styles.partialTranscript}>
+            Partial: {partialTranscript}
+          </Text>
         )}
+      </View>
 
-        <View style={styles.commandContainer}>
-          <Text style={styles.commandText}>
-            {!state.isRunning
-              ? 'Voice service stopped'
-              : commandConfigs[currentCommand]?.label || 'Say a command...'}
-          </Text>
-
-          {sessionId && (
-            <Text style={styles.sessionText}>
-              Session: {sessionId.substring(0, 8)}...
-            </Text>
-          )}
-
-          {lastHeard && (
-            <Text style={styles.debugText}>
-              Last heard: "{lastHeard}"
-            </Text>
-          )}
-
-          {state.isRunning && (
-            currentCommand !== 'none' && commandConfigs[currentCommand] ? (
-              <Animated.View style={{ opacity: fadeAnim }}>
-                <Image
-                  source={commandConfigs[currentCommand].imagePath}
-                  style={styles.commandImage}
-                />
-              </Animated.View>
-            ) : (
-              <ActivityIndicator size={100} color={colors.primary} />
-            )
-          )}
-        </View>
-
-        <TouchableOpacity
-          style={[styles.button, state.isRunning ? styles.buttonStop : styles.buttonStart]}
-          onPress={toggleService}
-        >
-          <Text style={styles.buttonText}>
-            {state.isRunning ? 'Stop Voice Service' : 'Start Voice Service'}
-          </Text>
-        </TouchableOpacity>
-
-        <Text style={styles.status}>
-          Available commands: swipe right, swipe left, tap, scroll up, scroll down
+      <TouchableOpacity
+        style={[
+          styles.button,
+          isListening ? styles.stopButton : styles.startButton
+        ]}
+        onPress={isListening ? stopListening : startListening}
+        disabled={connectionStatus === 'connecting'}
+      >
+        <Text style={styles.buttonText}>
+          {isListening ? 'Stop Listening' : 'Start Listening'}
         </Text>
+      </TouchableOpacity>
 
-        <Text style={styles.status}>
-          Status: {state.status.charAt(0).toUpperCase() + state.status.slice(1)}
+      <View style={styles.instructionContainer}>
+        <Text style={styles.instruction}>
+          Say any target word
         </Text>
-
-        <Text style={styles.status}>
-          Powered by AssemblyAI Streaming SDK Pattern
+        <Text style={styles.note}>
+          ✅ Now using real PCM audio from microphone
+        </Text>
+        <Text style={styles.techNote}>
+          react-native-audio-record → PCM16 → AssemblyAI V3
         </Text>
       </View>
-    </SafeAreaView>
+    </View>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 20,
+    backgroundColor: '#f5f5f5',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 5,
+    color: '#333',
+  },
+  subtitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  statusIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  statusText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  sessionContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  sessionText: {
+    fontSize: 12,
+    color: '#666',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  targetWordsContainer: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 10,
+    color: '#333',
+  },
+  wordsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 15,
+  },
+  wordChip: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  wordChipActive: {
+    backgroundColor: '#4CAF50',
+    borderColor: '#45a049',
+  },
+  wordText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  wordTextActive: {
+    color: 'white',
+  },
+  detectionContainer: {
+    backgroundColor: '#4CAF50',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  detectionText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  transcriptContainer: {
+    backgroundColor: 'white',
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 20,
+    minHeight: 120,
+  },
+  transcript: {
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 10,
+  },
+  partialTranscript: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
+    backgroundColor: '#f0f0f0',
+    padding: 8,
+    borderRadius: 5,
+  },
+  button: {
+    paddingVertical: 15,
+    paddingHorizontal: 30,
+    borderRadius: 25,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  startButton: {
+    backgroundColor: '#4CAF50',
+  },
+  stopButton: {
+    backgroundColor: '#f44336',
+  },
+  buttonText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: 'white',
+  },
+  instructionContainer: {
+    alignItems: 'center',
+  },
+  instruction: {
+    fontSize: 14,
+    textAlign: 'center',
+    color: '#666',
+    fontStyle: 'italic',
+    marginBottom: 5,
+  },
+  note: {
+    fontSize: 12,
+    textAlign: 'center',
+    color: '#4CAF50',
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  techNote: {
+    fontSize: 11,
+    textAlign: 'center',
+    color: '#999',
+    fontStyle: 'italic',
+  },
+});
 
 export default VoiceService;

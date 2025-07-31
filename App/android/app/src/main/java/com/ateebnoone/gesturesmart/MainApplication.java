@@ -22,7 +22,7 @@ import java.util.List;
 
 import com.ateebnoone.gesturesmart.GesturePackage;
 import com.ateebnoone.gesturesmart.GestureActionsPackage;
-import com.ateebnoone.gesturesmart.VoiceServicePackage;
+// import com.ateebnoone.gesturesmart.VoiceServicePackage;
 
 public class MainApplication extends Application implements ReactApplication {
   private final ReactNativeHost mReactNativeHost = new ReactNativeHostWrapper(
@@ -41,7 +41,7 @@ public class MainApplication extends Application implements ReactApplication {
           try {
             packages.add(new GesturePackage());
             packages.add(new GestureActionsPackage());
-            packages.add(new VoiceServicePackage());
+            // packages.add(new VoiceServicePackage());
           } catch (Exception e) {
             // Log the error but don't crash
             e.printStackTrace();

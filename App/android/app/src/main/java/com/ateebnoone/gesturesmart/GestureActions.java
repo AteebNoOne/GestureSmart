@@ -11,10 +11,18 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.WindowManager;
 
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.os.Handler;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 public class GestureActions extends ReactContextBaseJavaModule {
     private static final String TAG = "GestureActions";
@@ -22,12 +30,34 @@ public class GestureActions extends ReactContextBaseJavaModule {
     private static AccessibilityService staticAccessibilityService;
     private CursorOverlay cursorOverlay;
     private boolean isCursorActive = false;
+    private Map<String, String> appCache; // Cache for app names → package names
 
     public GestureActions(ReactApplicationContext context) {
         super(context);
         this.reactContext = context;
         this.cursorOverlay = new CursorOverlay(context);
+        this.appCache = new HashMap<>();
+        initializeAppCache();
         GestureModule.GestureActionsHolder.setInstance(this);
+    }
+
+    private void initializeAppCache() {
+        PackageManager pm = reactContext.getPackageManager();
+        List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+
+        for (ApplicationInfo appInfo : apps) {
+            String label = pm.getApplicationLabel(appInfo).toString();
+            String normalizedLabel = label.toLowerCase(Locale.ENGLISH).trim();
+            appCache.put(normalizedLabel, appInfo.packageName);
+
+            // Add common aliases
+            if (normalizedLabel.contains("youtube")) {
+                appCache.put("yt", appInfo.packageName);
+            }
+            if (normalizedLabel.contains("facebook")) {
+                appCache.put("fb", appInfo.packageName);
+            }
+        }
     }
 
     @Override
@@ -527,6 +557,438 @@ public class GestureActions extends ReactContextBaseJavaModule {
             }
         } catch (Exception e) {
             promise.reject("ERROR", "Failed to show recent apps: " + e.getMessage());
+        }
+    }
+
+    // Add these variables to your class (at the top with other instance variables)
+    private Handler scrollHandler;
+    private Runnable scrollRunnable;
+    private boolean isContinuousScrolling = false;
+    private String currentScrollDirection = ""; // "up" or "down"
+
+    // Continuous scroll up method
+    @ReactMethod
+    public void continuousScrollUp(Promise promise) {
+        if (isCursorActive) {
+            promise.reject("ERROR", "Cannot perform scroll while cursor is active");
+            return;
+        }
+
+        if (!checkAccessibilityPermission()) {
+            promise.reject("ERROR", "Accessibility permission not granted");
+            return;
+        }
+
+        AccessibilityService service = getAccessibilityService();
+        if (service == null) {
+            promise.reject("ERROR", "Accessibility service not available");
+            return;
+        }
+
+        try {
+            // Stop any existing continuous scrolling
+            stopScrolling(null);
+
+            isContinuousScrolling = true;
+            currentScrollDirection = "up";
+
+            if (scrollHandler == null) {
+                scrollHandler = new Handler(android.os.Looper.getMainLooper());
+            }
+
+            DisplayMetrics metrics = getDisplayMetrics();
+            final float screenWidth = metrics.widthPixels;
+            final float screenHeight = metrics.heightPixels;
+            final float centerX = screenWidth / 2f;
+            final float centerY = screenHeight / 2f;
+
+            scrollRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    if (!isContinuousScrolling || !currentScrollDirection.equals("up")) {
+                        return;
+                    }
+
+                    try {
+                        // Create scroll up gesture
+                        Path path = new Path();
+                        path.moveTo(centerX, centerY + (screenHeight * 0.15f)); // Start below center
+                        path.lineTo(centerX, centerY - (screenHeight * 0.15f)); // End above center
+
+                        GestureDescription.Builder gestureBuilder = new GestureDescription.Builder();
+                        gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 200));
+
+                        service.dispatchGesture(gestureBuilder.build(), null, null);
+
+                        // Schedule next scroll after a short delay
+                        if (isContinuousScrolling && scrollHandler != null) {
+                            scrollHandler.postDelayed(this, 300); // Repeat every 300ms
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error in continuous scroll up: " + e.getMessage());
+                        isContinuousScrolling = false;
+                    }
+                }
+            };
+
+            // Start the continuous scrolling
+            scrollHandler.post(scrollRunnable);
+            promise.resolve("Continuous scroll up started");
+            Log.i(TAG, "Continuous scroll up started");
+
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to start continuous scroll up: " + e.getMessage());
+        }
+    }
+
+    // Continuous scroll down method
+    @ReactMethod
+    public void continuousScrollDown(Promise promise) {
+        if (isCursorActive) {
+            promise.reject("ERROR", "Cannot perform scroll while cursor is active");
+            return;
+        }
+
+        if (!checkAccessibilityPermission()) {
+            promise.reject("ERROR", "Accessibility permission not granted");
+            return;
+        }
+
+        AccessibilityService service = getAccessibilityService();
+        if (service == null) {
+            promise.reject("ERROR", "Accessibility service not available");
+            return;
+        }
+
+        try {
+            // Stop any existing continuous scrolling
+            stopScrolling(null);
+
+            isContinuousScrolling = true;
+            currentScrollDirection = "down";
+
+            if (scrollHandler == null) {
+                scrollHandler = new Handler(android.os.Looper.getMainLooper());
+            }
+
+            DisplayMetrics metrics = getDisplayMetrics();
+            final float screenWidth = metrics.widthPixels;
+            final float screenHeight = metrics.heightPixels;
+            final float centerX = screenWidth / 2f;
+            final float centerY = screenHeight / 2f;
+
+            scrollRunnable = new Runnable() {
+                @Override
+                public void run() {
+                    if (!isContinuousScrolling || !currentScrollDirection.equals("down")) {
+                        return;
+                    }
+
+                    try {
+                        // Create scroll down gesture
+                        Path path = new Path();
+                        path.moveTo(centerX, centerY - (screenHeight * 0.15f)); // Start above center
+                        path.lineTo(centerX, centerY + (screenHeight * 0.15f)); // End below center
+
+                        GestureDescription.Builder gestureBuilder = new GestureDescription.Builder();
+                        gestureBuilder.addStroke(new GestureDescription.StrokeDescription(path, 0, 200));
+
+                        service.dispatchGesture(gestureBuilder.build(), null, null);
+
+                        // Schedule next scroll after a short delay
+                        if (isContinuousScrolling && scrollHandler != null) {
+                            scrollHandler.postDelayed(this, 300); // Repeat every 300ms
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error in continuous scroll down: " + e.getMessage());
+                        isContinuousScrolling = false;
+                    }
+                }
+            };
+
+            // Start the continuous scrolling
+            scrollHandler.post(scrollRunnable);
+            promise.resolve("Continuous scroll down started");
+            Log.i(TAG, "Continuous scroll down started");
+
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to start continuous scroll down: " + e.getMessage());
+        }
+    }
+
+    // Stop scrolling method
+    @ReactMethod
+    public void stopScrolling(Promise promise) {
+        try {
+            if (isContinuousScrolling) {
+                isContinuousScrolling = false;
+                currentScrollDirection = "";
+
+                if (scrollHandler != null && scrollRunnable != null) {
+                    scrollHandler.removeCallbacks(scrollRunnable);
+                    scrollRunnable = null;
+                }
+
+                Log.i(TAG, "Continuous scrolling stopped");
+
+                if (promise != null) {
+                    promise.resolve("Scrolling stopped");
+                }
+            } else {
+                Log.i(TAG, "No continuous scrolling to stop");
+
+                if (promise != null) {
+                    promise.resolve("No scrolling was active");
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error stopping scrolling: " + e.getMessage());
+            if (promise != null) {
+                promise.reject("ERROR", "Failed to stop scrolling: " + e.getMessage());
+            }
+        }
+    }
+
+    // Helper method to check if continuous scrolling is active
+    @ReactMethod
+    public void isScrolling(Promise promise) {
+        try {
+            Map<String, Object> result = new HashMap<>();
+            result.put("isScrolling", isContinuousScrolling);
+            result.put("direction", currentScrollDirection);
+            promise.resolve(result);
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to get scrolling status: " + e.getMessage());
+        }
+    }
+
+    // Improved openApp method with better search logic
+    @ReactMethod
+    public void openApp(String appName, Promise promise) {
+        try {
+            String normalizedInput = appName.toLowerCase(Locale.ENGLISH).trim();
+            PackageManager pm = reactContext.getPackageManager();
+
+            Log.i(TAG, "Searching for app: " + appName + " (normalized: " + normalizedInput + ")");
+
+            // 1. First try known package names for common apps
+            String packageName = getKnownPackageName(normalizedInput);
+            if (packageName != null) {
+                Log.i(TAG, "Found known package: " + packageName);
+                launchApp(packageName, appName, promise);
+                return;
+            }
+
+            // 2. Check cache for exact match
+            if (appCache.containsKey(normalizedInput)) {
+                Log.i(TAG, "Found exact match in cache: " + normalizedInput);
+                launchApp(appCache.get(normalizedInput), appName, promise);
+                return;
+            }
+
+            // 3. Check for partial matches in cache
+            for (String cachedName : appCache.keySet()) {
+                if (cachedName.contains(normalizedInput) || normalizedInput.contains(cachedName)) {
+                    Log.i(TAG, "Found partial match in cache: " + cachedName);
+                    launchApp(appCache.get(cachedName), appName, promise);
+                    return;
+                }
+            }
+
+            // 4. Refresh cache and try again (in case apps were installed after
+            // initialization)
+            Log.i(TAG, "Refreshing app cache and searching again...");
+            refreshAppCache();
+
+            // 5. Try cache searches again after refresh
+            if (appCache.containsKey(normalizedInput)) {
+                Log.i(TAG, "Found exact match after cache refresh: " + normalizedInput);
+                launchApp(appCache.get(normalizedInput), appName, promise);
+                return;
+            }
+
+            for (String cachedName : appCache.keySet()) {
+                if (cachedName.contains(normalizedInput) || normalizedInput.contains(cachedName)) {
+                    Log.i(TAG, "Found partial match after cache refresh: " + cachedName);
+                    launchApp(appCache.get(cachedName), appName, promise);
+                    return;
+                }
+            }
+
+            // 6. Final fallback: Live system search with multiple criteria
+            Log.i(TAG, "Performing live system search...");
+            Intent intent = new Intent(Intent.ACTION_MAIN);
+            intent.addCategory(Intent.CATEGORY_LAUNCHER);
+            List<ResolveInfo> resolveInfos = pm.queryIntentActivities(intent, 0);
+
+            // First pass: exact matches
+            for (ResolveInfo resolveInfo : resolveInfos) {
+                String label = resolveInfo.loadLabel(pm).toString().toLowerCase(Locale.ENGLISH);
+                String packageNameLower = resolveInfo.activityInfo.packageName.toLowerCase(Locale.ENGLISH);
+
+                if (label.equals(normalizedInput) || packageNameLower.contains(normalizedInput)) {
+                    Log.i(TAG, "Found exact match in live search: " + label + " ("
+                            + resolveInfo.activityInfo.packageName + ")");
+                    launchApp(resolveInfo.activityInfo.packageName, appName, promise);
+                    return;
+                }
+            }
+
+            // Second pass: partial matches
+            for (ResolveInfo resolveInfo : resolveInfos) {
+                String label = resolveInfo.loadLabel(pm).toString().toLowerCase(Locale.ENGLISH);
+                String packageNameLower = resolveInfo.activityInfo.packageName.toLowerCase(Locale.ENGLISH);
+
+                if (label.contains(normalizedInput) || normalizedInput.contains(label) ||
+                        packageNameLower.contains(normalizedInput)) {
+                    Log.i(TAG, "Found partial match in live search: " + label + " ("
+                            + resolveInfo.activityInfo.packageName + ")");
+                    launchApp(resolveInfo.activityInfo.packageName, appName, promise);
+                    return;
+                }
+            }
+
+            // 7. Log available apps for debugging
+            Log.w(TAG, "App not found. Available apps in cache:");
+            for (String cachedName : appCache.keySet()) {
+                Log.w(TAG, "  - " + cachedName + " -> " + appCache.get(cachedName));
+            }
+
+            promise.reject("APP_NOT_FOUND", "Can't find app \"" + appName + "\". Try using exact app name.");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error opening app: " + e.getMessage(), e);
+            promise.reject("ERROR", "Failed to open app: " + e.getMessage());
+        }
+    }
+
+    // Method to get known package names for popular apps
+    private String getKnownPackageName(String normalizedAppName) {
+        Map<String, String> knownApps = new HashMap<>();
+
+        // Popular apps with their exact package names
+        knownApps.put("youtube", "com.google.android.youtube");
+        knownApps.put("gmail", "com.google.android.gm");
+        knownApps.put("chrome", "com.android.chrome");
+        knownApps.put("maps", "com.google.android.apps.maps");
+        knownApps.put("google maps", "com.google.android.apps.maps");
+        knownApps.put("whatsapp", "com.whatsapp");
+        knownApps.put("facebook", "com.facebook.katana");
+        knownApps.put("instagram", "com.instagram.android");
+        knownApps.put("twitter", "com.twitter.android");
+        knownApps.put("x", "com.twitter.android");
+        knownApps.put("spotify", "com.spotify.music");
+        knownApps.put("netflix", "com.netflix.mediaclient");
+        knownApps.put("amazon", "com.amazon.mShop.android.shopping");
+        knownApps.put("uber", "com.ubercab");
+        knownApps.put("tiktok", "com.zhiliaoapp.musically");
+        knownApps.put("telegram", "org.telegram.messenger");
+        knownApps.put("snapchat", "com.snapchat.android");
+        knownApps.put("discord", "com.discord");
+        knownApps.put("zoom", "us.zoom.videomeetings");
+        knownApps.put("microsoft teams", "com.microsoft.teams");
+        knownApps.put("teams", "com.microsoft.teams");
+        knownApps.put("skype", "com.skype.raider");
+        knownApps.put("pinterest", "com.pinterest");
+        knownApps.put("linkedin", "com.linkedin.android");
+        knownApps.put("reddit", "com.reddit.frontpage");
+        knownApps.put("calculator", "com.google.android.calculator");
+        knownApps.put("calendar", "com.google.android.calendar");
+        knownApps.put("camera", "com.google.android.GoogleCamera");
+        knownApps.put("photos", "com.google.android.apps.photos");
+        knownApps.put("play store", "com.android.vending");
+        knownApps.put("playstore", "com.android.vending");
+        knownApps.put("settings", "com.android.settings");
+
+        return knownApps.get(normalizedAppName);
+    }
+
+    // Method to refresh the app cache
+    private void refreshAppCache() {
+        try {
+            Log.i(TAG, "Refreshing app cache...");
+            appCache.clear();
+
+            PackageManager pm = reactContext.getPackageManager();
+            Intent intent = new Intent(Intent.ACTION_MAIN);
+            intent.addCategory(Intent.CATEGORY_LAUNCHER);
+            List<ResolveInfo> resolveInfos = pm.queryIntentActivities(intent, 0);
+
+            for (ResolveInfo resolveInfo : resolveInfos) {
+                try {
+                    String label = resolveInfo.loadLabel(pm).toString().toLowerCase(Locale.ENGLISH).trim();
+                    String packageName = resolveInfo.activityInfo.packageName;
+                    appCache.put(label, packageName);
+
+                    // Also add package name as a key for direct package searches
+                    String packageNameLower = packageName.toLowerCase(Locale.ENGLISH);
+                    if (!appCache.containsKey(packageNameLower)) {
+                        appCache.put(packageNameLower, packageName);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Error processing app: " + e.getMessage());
+                }
+            }
+
+            Log.i(TAG, "App cache refreshed with " + appCache.size() + " entries");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to refresh app cache: " + e.getMessage());
+        }
+    }
+
+    // Method to list all available apps (for debugging)
+    @ReactMethod
+    public void listAvailableApps(Promise promise) {
+        try {
+            refreshAppCache();
+
+            Map<String, String> result = new HashMap<>();
+            for (Map.Entry<String, String> entry : appCache.entrySet()) {
+                result.put(entry.getKey(), entry.getValue());
+            }
+
+            promise.resolve(result);
+            Log.i(TAG, "Listed " + result.size() + " available apps");
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to list apps: " + e.getMessage());
+        }
+    }
+
+    // Method to search for apps by partial name (for debugging)
+    @ReactMethod
+    public void searchApps(String searchTerm, Promise promise) {
+        try {
+            String normalizedSearch = searchTerm.toLowerCase(Locale.ENGLISH).trim();
+            Map<String, String> matches = new HashMap<>();
+
+            refreshAppCache();
+
+            for (Map.Entry<String, String> entry : appCache.entrySet()) {
+                if (entry.getKey().contains(normalizedSearch)) {
+                    matches.put(entry.getKey(), entry.getValue());
+                }
+            }
+
+            promise.resolve(matches);
+            Log.i(TAG, "Found " + matches.size() + " matches for: " + searchTerm);
+        } catch (Exception e) {
+            promise.reject("ERROR", "Failed to search apps: " + e.getMessage());
+        }
+    }
+
+    private void launchApp(String packageName, String appName, Promise promise) {
+        try {
+            PackageManager pm = reactContext.getPackageManager();
+            Intent intent = pm.getLaunchIntentForPackage(packageName);
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                reactContext.startActivity(intent);
+                promise.resolve("Opened app: " + appName);
+            } else {
+                promise.reject("NO_LAUNCHER", "App has no launcher activity");
+            }
+        } catch (Exception e) {
+            promise.reject("LAUNCH_ERROR", "Failed to launch app: " + e.getMessage());
         }
     }
 
