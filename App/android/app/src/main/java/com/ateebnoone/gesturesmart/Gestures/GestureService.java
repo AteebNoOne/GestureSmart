@@ -31,7 +31,7 @@ import android.view.Surface;
 import android.os.Handler;
 import android.os.HandlerThread;
 import androidx.annotation.NonNull;
-
+import android.os.PowerManager;
 import com.facebook.react.ReactApplication;
 import com.facebook.react.ReactNativeHost;
 import com.facebook.react.bridge.ReactContext;
@@ -47,6 +47,8 @@ import java.util.List;
 import java.util.Arrays;
 import java.nio.ByteBuffer;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import android.os.Build;
 
 public class GestureService extends Service {
     private static final String TAG = "GestureService";
@@ -79,6 +81,7 @@ public class GestureService extends Service {
     private static final long PROCESS_DELAY = 300; // Faster processing
     private final Handler processHandler = new Handler(Looper.getMainLooper());
     private long lastProcessTime = 0;
+    private PowerManager.WakeLock wakeLock;
 
     // Enhanced gesture tracking variables
     private PointF prevPalmPosition = null;
@@ -174,6 +177,10 @@ public class GestureService extends Service {
 
             startBackgroundThread();
             Log.i(TAG, "Background thread started");
+            PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
+wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GestureService::WakeLock");
+wakeLock.acquire();
+Log.i(TAG, "Wake lock acquired");
 
             Log.i(TAG, "========= GestureService successfully initialized =========");
         } catch (Exception e) {
@@ -251,6 +258,7 @@ public class GestureService extends Service {
         }
 
         try {
+            
             List<NormalizedLandmarkList> multiHandLandmarks = result.multiHandLandmarks();
 
             // Update hand detection status
@@ -613,6 +621,7 @@ public class GestureService extends Service {
 
     // Convert YUV_420_888 Image to Bitmap
     private Bitmap convertYuvToBitmap(Image image) {
+        ByteArrayOutputStream out = null; // Declare outside try block
         try {
             Image.Plane[] planes = image.getPlanes();
             ByteBuffer yBuffer = planes[0].getBuffer(); // Y
@@ -627,7 +636,7 @@ public class GestureService extends Service {
             vuBuffer.get(nv21, ySize, vuSize);
 
             YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            out = new ByteArrayOutputStream();
             yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 50, out);
             byte[] imageBytes = out.toByteArray();
 
@@ -643,6 +652,15 @@ public class GestureService extends Service {
             Log.e(TAG, "Error converting YUV to Bitmap: " + e.getMessage());
             return null;
         }
+        finally {
+            if (out != null) {
+                try {
+                    out.close();
+                } catch (IOException e) {
+                    Log.e(TAG, "Error closing stream", e);
+                }
+            }
+        }
     }
 
     private void startBackgroundThread() {
@@ -652,12 +670,24 @@ public class GestureService extends Service {
     }
 
     private void createNotificationChannel() {
-        NotificationChannel channel = new NotificationChannel(
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "Gesture Service Channel",
-                NotificationManager.IMPORTANCE_LOW);
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        manager.createNotificationChannel(channel);
+                "Gesture Service",
+                NotificationManager.IMPORTANCE_HIGH // Was IMPORTANCE_LOW
+            );
+            channel.setDescription("Gesture detection service");
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            manager.createNotificationChannel(channel);
+        }
+        else {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Gesture Service Channel",
+                    NotificationManager.IMPORTANCE_LOW);
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            manager.createNotificationChannel(channel);
+        }
     }
 
     private Notification createNotification() {
@@ -684,34 +714,50 @@ public class GestureService extends Service {
             createCameraPreviewSession();
         }
 
-        @Override
-        public void onDisconnected(@NonNull CameraDevice camera) {
-            Log.i(TAG, "Camera disconnected");
-            camera.close();
-            cameraDevice = null;
-        }
+        
 
-        @Override
-        public void onError(@NonNull CameraDevice camera, int error) {
-            Log.e(TAG, "Camera Error: " + error);
-            camera.close();
-            cameraDevice = null;
-        }
+     @Override
+    public void onDisconnected(@NonNull CameraDevice camera) {
+        Log.w(TAG, "Camera disconnected - attempting restart");
+        camera.close();
+        cameraDevice = null;
+        scheduleCameraRestart(); // Add this line
+    }
+
+       @Override
+    public void onError(@NonNull CameraDevice camera, int error) {
+        Log.e(TAG, "Camera Error: " + error);
+        camera.close();
+        cameraDevice = null;
+        scheduleCameraRestart(); // Add this line
+    }
     };
+
+    private void scheduleCameraRestart() {
+    if (backgroundHandler != null) {
+        backgroundHandler.postDelayed(() -> {
+            if (isProcessing) {
+                Log.i(TAG, "Attempting camera restart...");
+                stopCamera();
+                startCamera();
+            }
+        }, 1000); // Restart after 1 second
+    }
+}
 
     private void createCameraPreviewSession() {
         try {
             // Create ImageReader for processing frames
-            imageReader = ImageReader.newInstance(640, 480, ImageFormat.YUV_420_888, 2);
+            imageReader = ImageReader.newInstance(480, 360, ImageFormat.YUV_420_888, 2); // Was 640x480
 
             imageReader.setOnImageAvailableListener(reader -> {
                 long currentTime = System.currentTimeMillis();
-                if (currentTime - lastProcessTime < PROCESS_DELAY) {
-                    return; // Skip frame to reduce processing load
+                Image image = null; // Only declare once
+                if (currentTime - lastProcessTime < PROCESS_DELAY || !isProcessing) {
+                    if (image != null) image.close();
+                    return; // Skip frame more aggressively
                 }
                 lastProcessTime = currentTime;
-
-                Image image = null;
                 try {
                     image = reader.acquireLatestImage();
                     if (image != null && hands != null && isProcessing) {
@@ -815,6 +861,9 @@ public class GestureService extends Service {
     }
 
     private void stopCamera() {
+        if (wakeLock != null && wakeLock.isHeld()) {
+    wakeLock.release();
+}
         if (cameraCaptureSession != null) {
             cameraCaptureSession.close();
             cameraCaptureSession = null;
@@ -875,7 +924,10 @@ public class GestureService extends Service {
         if (hands != null) {
             hands.close();
         }
-
+if (wakeLock != null && wakeLock.isHeld()) {
+    wakeLock.release();
+    Log.i(TAG, "Wake lock released");
+}
         // Unregister broadcast receiver
         try {
             unregisterReceiver(cursorModeReceiver);

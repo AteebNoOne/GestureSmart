@@ -1,6 +1,4 @@
-import { Alert } from 'react-native';
-import { NativeModules, Platform } from 'react-native';
-
+import { Alert,NativeModules, Platform } from 'react-native';
 
 // Define types for the native module
 interface GestureActionsType {

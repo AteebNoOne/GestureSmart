@@ -39,7 +39,6 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { NavigationProp } from "@react-navigation/native";
 import * as Notifications from "expo-notifications";
 
-
 // Types
 interface GestureConfig {
     label: string;
@@ -58,7 +57,7 @@ interface AppState {
     isRunning: boolean;
     isInitialized: boolean;
     isBackgroundActive: boolean;
-    status: "initializing" | "stopped" | "running" | "background" | "error";
+    status: "initializing" | "stopped" | "running" | "background" | "error" | "camera_lost";
 }
 
 // Native module interface
@@ -80,6 +79,10 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const isMountedRef = useRef<boolean>(true);
     const gestureSubscriptionRef = useRef<EmitterSubscription | null>(null);
+    const cameraHealthCheckInterval = useRef<NodeJS.Timeout | null>(null);
+    const serviceRestartAttempts = useRef<number>(0);
+    const maxRestartAttempts = 3;
+    
     const [handDetectionStatus, setHandDetectionStatus] = useState({
         status: 'no_hands',
         landmarkCount: 0,
@@ -87,9 +90,11 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         lastUpdate: 0,
         isActive: false
     });
+    
     // State
     const [currentGesture, setCurrentGesture] = useState<string>("none");
     const [backgroundPermissionGranted, setBackgroundPermissionGranted] = useState<boolean>(false);
+    const [cameraPermissionDenied, setCameraPermissionDenied] = useState<boolean>(false);
     const [state, setState] = useState<AppState>({
         isRunning: false,
         isInitialized: false,
@@ -117,7 +122,6 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             label: "Tap",
             imagePath: require("../assets/gestures/tap.png"),
         },
-
         swipe_left: {
             label: "Swipe Left",
             imagePath: require("../assets/gestures/swipe_left.png"),
@@ -143,26 +147,28 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, []);
 
-    // Request comprehensive Android permissions
+    // Enhanced Android 14 permission request
     const requestAndroidPermissions = useCallback(async (): Promise<void> => {
         try {
             if (Platform.OS === 'android') {
                 const permissions: string[] = [
                     'android.permission.CAMERA',
                     'android.permission.WAKE_LOCK',
-                    'android.permission.RECORD_AUDIO',
-                    'android.permission.MODIFY_AUDIO_SETTINGS',
                 ];
 
-                // Add version-specific permissions
+                // Android 14 specific permissions
                 if (Platform.Version >= 28) {
                     permissions.push('android.permission.FOREGROUND_SERVICE');
                 }
 
-                if (Platform.Version >= 34) {
-                    permissions.push('android.permission.FOREGROUND_SERVICE_CAMERA');
+                if (Platform.Version >= 34) { // Android 14
+                    permissions.push(
+                        'android.permission.FOREGROUND_SERVICE_CAMERA',
+                        'android.permission.POST_NOTIFICATIONS'
+                    );
                 }
 
+                // Request permissions with rationale for Android 14
                 const results = await PermissionsAndroid.requestMultiple(permissions);
                 const allGranted = Object.values(results).every(
                     result => result === PermissionsAndroid.RESULTS.GRANTED
@@ -170,18 +176,26 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
 
                 if (allGranted) {
                     await requestNotificationPermission();
-                    await requestOverlayPermission();
-                    await requestBatteryOptimizationDisable();
+                    await requestBatteryOptimizationExemption();
                     setBackgroundPermissionGranted(true);
+                    setCameraPermissionDenied(false);
                 } else {
+                    const cameraPermission = results['android.permission.CAMERA'];
+                    if (cameraPermission === PermissionsAndroid.RESULTS.DENIED || 
+                        cameraPermission === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
+                        setCameraPermissionDenied(true);
+                    }
+                    
                     Alert.alert(
                         'Permissions Required',
-                        'Background gesture detection requires all permissions to function properly.',
-                        [{ text: 'OK' }]
+                        'Android 14 requires all permissions for background gesture detection. Please enable them in Settings.',
+                        [
+                            { text: 'Open Settings', onPress: () => Linking.openSettings() },
+                            { text: 'Cancel', style: 'cancel' }
+                        ]
                     );
                 }
             } else {
-                // iOS permissions
                 await requestNotificationPermission();
                 setBackgroundPermissionGranted(true);
             }
@@ -190,14 +204,41 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, []);
 
-    // Request notification permission
+    // Request battery optimization exemption for Android 14
+    const requestBatteryOptimizationExemption = useCallback(async (): Promise<void> => {
+        try {
+            if (Platform.OS === 'android' && Platform.Version >= 34) {
+                // Check if we can request battery optimization exemption
+                const { PowerManager } = NativeModules;
+                if (PowerManager && PowerManager.requestIgnoreBatteryOptimizations) {
+                    await PowerManager.requestIgnoreBatteryOptimizations();
+                }
+            }
+        } catch (error) {
+            console.log('Battery optimization exemption not available:', error);
+        }
+    }, []);
+
+    // Enhanced notification permission request
     const requestNotificationPermission = useCallback(async (): Promise<void> => {
         try {
-            const { status } = await Notifications.requestPermissionsAsync();
+            const { status } = await Notifications.requestPermissionsAsync({
+                ios: {
+                    allowAlert: true,
+                    allowBadge: true,
+                    allowSound: false,
+                },
+                android: {
+                    allowAlert: true,
+                    allowBadge: true,
+                    allowSound: false,
+                },
+            });
+            
             if (status !== 'granted') {
                 Alert.alert(
                     'Notification Permission',
-                    'Notifications are needed to show background activity status.',
+                    'Notifications help monitor gesture service status in background mode.',
                     [{ text: 'OK' }]
                 );
             }
@@ -206,53 +247,62 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, []);
 
-    // Handle overlay permission
-    const requestOverlayPermission = useCallback(async (): Promise<void> => {
-        try {
-            if (Platform.OS === 'android') {
-                const granted = await PermissionsAndroid.check(
-                    'android.permission.SYSTEM_ALERT_WINDOW'
-                );
-
-                if (!granted) {
-                    Alert.alert(
-                        'Overlay Permission Required',
-                        'This app needs permission to display over other apps for gesture detection.',
-                        [
-                            {
-                                text: 'Grant Permission',
-                                onPress: () => Linking.openSettings(),
-                            },
-                            { text: 'Cancel', style: 'cancel' },
-                        ]
-                    );
-                }
-            }
-        } catch (error) {
-            console.error('Overlay permission request failed:', error);
+    // Camera health monitoring for Android 14
+    const startCameraHealthCheck = useCallback(() => {
+        if (cameraHealthCheckInterval.current) {
+            clearInterval(cameraHealthCheckInterval.current);
         }
-    }, []);
 
-    // Request battery optimization disable
-    const requestBatteryOptimizationDisable = useCallback(async (): Promise<void> => {
-        try {
-            if (Platform.OS === 'android' && Platform.Version >= 23) {
-                Alert.alert(
-                    'Battery Optimization',
-                    'To ensure background gesture detection works properly, please disable battery optimization for this app.',
-                    [
-                        {
-                            text: 'Settings',
-                            onPress: () => Linking.openSettings(),
-                        },
-                        { text: 'Later', style: 'cancel' },
-                    ]
-                );
+        cameraHealthCheckInterval.current = setInterval(() => {
+            const timeSinceLastUpdate = Date.now() - handDetectionStatus.lastUpdate;
+            
+            // If no camera updates for 5 seconds while service is running
+            if (state.isRunning && timeSinceLastUpdate > 5000 && handDetectionStatus.lastUpdate > 0) {
+                console.warn('Camera feed appears to be lost - attempting restart');
+                safeSetState(prev => ({ ...prev, status: "camera_lost" }));
+                handleCameraLoss();
             }
-        } catch (error) {
-            console.error('Battery optimization request failed:', error);
+        }, 3000); // Check every 3 seconds
+    }, [handDetectionStatus.lastUpdate, state.isRunning, safeSetState]);
+
+    // Handle camera loss and attempt recovery
+    const handleCameraLoss = useCallback(async () => {
+        if (serviceRestartAttempts.current >= maxRestartAttempts) {
+            console.error('Max restart attempts reached');
+            Alert.alert(
+                'Camera Service Failed',
+                'Unable to maintain camera connection. Please restart the service manually.',
+                [{ text: 'OK' }]
+            );
+            return;
         }
-    }, []);
+
+        serviceRestartAttempts.current++;
+        console.log(`Attempting service restart ${serviceRestartAttempts.current}/${maxRestartAttempts}`);
+
+        try {
+            // Stop service
+            await GestureServiceModule.stopService();
+            
+            // Wait a moment
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Restart service
+            await GestureServiceModule.startService();
+            
+            safeSetState(prev => ({ ...prev, status: "running" }));
+            console.log('Service restarted successfully');
+            
+            // Reset attempts counter on successful restart
+            setTimeout(() => {
+                serviceRestartAttempts.current = 0;
+            }, 30000); // Reset after 30 seconds of stable operation
+            
+        } catch (error) {
+            console.error('Service restart failed:', error);
+            safeSetState(prev => ({ ...prev, status: "error" }));
+        }
+    }, [safeSetState]);
 
     // Initialize gesture service
     useEffect(() => {
@@ -274,17 +324,17 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     // Gesture events
                     const gestureSubscription = eventEmitter.addListener(
                         GestureServiceModule.EVENT_NAME,
-                        (data) => {
+                        (data: { gesture: React.SetStateAction<string>; }) => {
                             console.log('Gesture event received:', data);
                             setCurrentGesture(data.gesture);
                             handleGesture(data.gesture);
                         }
                     );
 
-                    // Hand detection events
+                    // Enhanced hand detection events
                     const handDetectionSubscription = eventEmitter.addListener(
                         GestureServiceModule.HAND_DETECTION_EVENT_NAME,
-                        (data) => {
+                        (data: { status: string; landmarkCount: any; confidence: any; }) => {
                             console.log('Hand detection event:', data);
                             setHandDetectionStatus({
                                 status: data.status,
@@ -293,13 +343,33 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                                 lastUpdate: Date.now(),
                                 isActive: data.status === 'hand_detected'
                             });
+                            
+                            // Reset camera loss status if we're getting updates
+                            if (state.status === "camera_lost") {
+                                safeSetState(prev => ({ 
+                                    ...prev, 
+                                    status: prev.isBackgroundActive ? "background" : "running" 
+                                }));
+                            }
+                        }
+                    );
+
+                    // Service status events for Android 14
+                    const serviceStatusSubscription = eventEmitter.addListener(
+                        'GestureServiceStatus',
+                        (data: { status: string; }) => {
+                            console.log('Service status event:', data);
+                            if (data.status === 'camera_error' || data.status === 'service_killed') {
+                                handleCameraLoss();
+                            }
                         }
                     );
 
                     // Store subscriptions for cleanup
                     gestureSubscriptionRef.current = {
                         gesture: gestureSubscription,
-                        handDetection: handDetectionSubscription
+                        handDetection: handDetectionSubscription,
+                        serviceStatus: serviceStatusSubscription
                     };
                 }
             } catch (error) {
@@ -312,23 +382,29 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
 
         return () => {
             isMountedRef.current = false;
+            if (cameraHealthCheckInterval.current) {
+                clearInterval(cameraHealthCheckInterval.current);
+            }
             if (gestureSubscriptionRef.current) {
-                if (gestureSubscriptionRef.current.gesture) {
-                    gestureSubscriptionRef.current.gesture.remove();
-                }
-                if (gestureSubscriptionRef.current.handDetection) {
-                    gestureSubscriptionRef.current.handDetection.remove();
-                }
+                Object.values(gestureSubscriptionRef.current).forEach(subscription => {
+                    if (subscription && typeof subscription.remove === 'function') {
+                        subscription.remove();
+                    }
+                });
                 gestureSubscriptionRef.current = null;
             }
         };
-    }, [requestAndroidPermissions, safeSetState]);
+    }, [requestAndroidPermissions, safeSetState, handleCameraLoss, state.status]);
 
     const getHandDetectionStatusText = useCallback(() => {
         const timeSinceUpdate = Date.now() - handDetectionStatus.lastUpdate;
 
-        if (timeSinceUpdate > 2000) { // No update for 2 seconds
-            return "No camera feed";
+        if (timeSinceUpdate > 5000) {
+            return "⚠️ Camera feed lost - attempting recovery";
+        }
+
+        if (timeSinceUpdate > 2000) {
+            return "📷 Camera feed unstable";
         }
 
         switch (handDetectionStatus.status) {
@@ -341,7 +417,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, [handDetectionStatus]);
 
-    // Enhanced app state handling
+    // Enhanced app state handling for Android 14
     useEffect(() => {
         const handleAppStateChange = async (nextAppState: AppStateStatus): Promise<void> => {
             console.log('App state changed:', appState.current, '->', nextAppState);
@@ -354,6 +430,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                         isBackgroundActive: true,
                         status: "background"
                     }));
+                    startCameraHealthCheck();
                 } else if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
                     // App coming to foreground
                     safeSetState(prev => ({
@@ -361,6 +438,12 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                         isBackgroundActive: false,
                         status: "running"
                     }));
+                    
+                    // Clear health check when in foreground
+                    if (cameraHealthCheckInterval.current) {
+                        clearInterval(cameraHealthCheckInterval.current);
+                        cameraHealthCheckInterval.current = null;
+                    }
                 }
             }
 
@@ -372,7 +455,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         return () => {
             subscription?.remove();
         };
-    }, [safeSetState, state.isRunning]);
+    }, [safeSetState, state.isRunning, startCameraHealthCheck]);
 
     // Gesture animation
     useEffect(() => {
@@ -391,8 +474,6 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             ]).start();
         }
     }, [currentGesture, fadeAnim]);
-
-
 
     // Gesture handler
     const handleGesture = useCallback(async (gesture: string): Promise<void> => {
@@ -430,15 +511,18 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, [state.isBackgroundActive]);
 
-    // Service toggle
+    // Enhanced service toggle with Android 14 considerations
     const toggleService = useCallback(async (): Promise<void> => {
         try {
-            if (!backgroundPermissionGranted) {
+            if (!backgroundPermissionGranted || cameraPermissionDenied) {
                 Alert.alert(
                     'Permissions Required',
-                    'Please grant all required permissions for background gesture detection.',
+                    Platform.Version >= 34 
+                        ? 'Android 14 requires camera and foreground service permissions for background gesture detection.'
+                        : 'Please grant all required permissions for background gesture detection.',
                     [
                         { text: 'Grant Permissions', onPress: requestAndroidPermissions },
+                        { text: 'Open Settings', onPress: () => Linking.openSettings() },
                         { text: 'Cancel', style: 'cancel' },
                     ]
                 );
@@ -446,6 +530,9 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             }
 
             if (!state.isRunning) {
+                // Reset restart attempts
+                serviceRestartAttempts.current = 0;
+                
                 // Start native service
                 try {
                     await GestureServiceModule.startService();
@@ -454,13 +541,31 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                         isRunning: true,
                         status: "running",
                     }));
+                    
+                    // Start health monitoring if in background
+                    if (AppState.currentState !== 'active') {
+                        startCameraHealthCheck();
+                    }
                 } catch (error) {
                     console.error('Failed to start native service:', error);
+                    Alert.alert(
+                        'Service Start Failed',
+                        Platform.Version >= 34 
+                            ? 'Unable to start gesture service. Please check Android 14 foreground service permissions.'
+                            : 'Unable to start gesture service. Please check permissions.',
+                        [{ text: 'OK' }]
+                    );
                     return;
                 }
             } else {
                 // Stop native service
                 try {
+                    // Clear health monitoring
+                    if (cameraHealthCheckInterval.current) {
+                        clearInterval(cameraHealthCheckInterval.current);
+                        cameraHealthCheckInterval.current = null;
+                    }
+                    
                     // Make sure cursor is closed before stopping service
                     const GestureActions = NativeModules.GestureActions;
                     try {
@@ -490,9 +595,11 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, [
         backgroundPermissionGranted,
+        cameraPermissionDenied,
         requestAndroidPermissions,
         state.isRunning,
         safeSetState,
+        startCameraHealthCheck,
     ]);
 
     // Status helpers
@@ -506,6 +613,8 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                 return "Stopped";
             case "initializing":
                 return "Initializing";
+            case "camera_lost":
+                return "Camera Lost - Recovering";
             case "error":
                 return "Error";
             default:
@@ -523,6 +632,8 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                 return "#666";
             case "initializing":
                 return "#2196F3";
+            case "camera_lost":
+                return "#FF5722";
             case "error":
                 return "#f44336";
             default:
@@ -617,7 +728,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         },
         permissionContainer: {
             padding: 20,
-            backgroundColor: "#ffeb3b",
+            backgroundColor: Platform.Version >= 34 ? "#ffcdd2" : "#ffeb3b",
             borderRadius: 10,
             marginVertical: 10,
         },
@@ -626,7 +737,18 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             color: "#333",
             textAlign: "center",
         },
-
+        android14Warning: {
+            padding: 15,
+            backgroundColor: "#ff5722",
+            borderRadius: 8,
+            marginVertical: 10,
+        },
+        android14WarningText: {
+            fontSize: 13,
+            color: "white",
+            textAlign: "center",
+            fontWeight: "600",
+        },
         handDetectionContainer: {
             flexDirection: "row",
             alignItems: "center",
@@ -648,6 +770,10 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             backgroundColor: "#FFEBEE",
             borderColor: "#F44336",
         },
+        cameraLostStyle: {
+            backgroundColor: "#FFF3E0",
+            borderColor: "#FF5722",
+        },
         handDetectionText: {
             fontSize: 14,
             fontWeight: "600",
@@ -663,6 +789,9 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         noFeedText: {
             color: "#C62828",
         },
+        cameraLostText: {
+            color: "#E65100",
+        },
         debugInfo: {
             backgroundColor: "#f0f0f0",
             padding: 10,
@@ -674,15 +803,33 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             fontFamily: "monospace",
             color: "#333",
         },
+        restartButton: {
+            padding: 10,
+            backgroundColor: "#FF5722",
+            borderRadius: 5,
+            marginVertical: 5,
+        },
+        restartButtonText: {
+            color: "white",
+            fontSize: 14,
+            fontWeight: "bold",
+            textAlign: "center",
+        },
     });
 
     const renderHandDetectionStatus = () => {
         const timeSinceUpdate = Date.now() - handDetectionStatus.lastUpdate;
         const isStale = timeSinceUpdate > 2000;
+        const isCameraLost = timeSinceUpdate > 5000 && state.isRunning;
 
         let containerStyle, textStyle, iconName, iconColor;
 
-        if (isStale) {
+        if (isCameraLost) {
+            containerStyle = styles.cameraLostStyle;
+            textStyle = styles.cameraLostText;
+            iconName = "camera-off";
+            iconColor = "#E65100";
+        } else if (isStale) {
             containerStyle = styles.noFeedStyle;
             textStyle = styles.noFeedText;
             iconName = "camera-off";
@@ -716,14 +863,22 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             <View style={styles.debugInfo}>
                 <Text style={styles.debugText}>
                     Debug Info:{'\n'}
+                    • Android Version: {Platform.Version}{'\n'}
                     • Service: {state.status}{'\n'}
                     • Hand Status: {handDetectionStatus.status}{'\n'}
                     • Landmarks: {handDetectionStatus.landmarkCount}{'\n'}
                     • Confidence: {Math.round(handDetectionStatus.confidence * 100)}%{'\n'}
                     • Last Update: {handDetectionStatus.lastUpdate > 0 ?
                         `${Date.now() - handDetectionStatus.lastUpdate}ms ago` : 'Never'}{'\n'}
-                    • Current Gesture: {currentGesture}
+                    • Current Gesture: {currentGesture}{'\n'}
+                    • Restart Attempts: {serviceRestartAttempts.current}/{maxRestartAttempts}
                 </Text>
+                
+                {state.status === "camera_lost" && (
+                    <TouchableOpacity style={styles.restartButton} onPress={handleCameraLoss}>
+                        <Text style={styles.restartButtonText}>Manual Restart</Text>
+                    </TouchableOpacity>
+                )}
             </View>
         );
     };
@@ -747,10 +902,21 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     </View>
                 </View>
 
-                {!backgroundPermissionGranted && (
+                {Platform.Version >= 34 && (
+                    <View style={styles.android14Warning}>
+                        <Text style={styles.android14WarningText}>
+                            Android 14 Detected: Enhanced permissions and battery optimization exemption required for stable background operation
+                        </Text>
+                    </View>
+                )}
+
+                {(!backgroundPermissionGranted || cameraPermissionDenied) && (
                     <View style={styles.permissionContainer}>
                         <Text style={styles.permissionText}>
-                            Background permissions required for gesture detection when app is not active
+                            {Platform.Version >= 34 
+                                ? "Android 14 requires camera, foreground service, and notification permissions for background gesture detection"
+                                : "Background permissions required for gesture detection when app is not active"
+                            }
                         </Text>
                     </View>
                 )}
@@ -766,16 +932,17 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     </View>
                 )}
 
-
                 {renderDebugInfo()}
 
                 <View style={styles.gestureContainer}>
                     <Text style={styles.gestureText}>
                         {!state.isRunning
                             ? "Service stopped"
-                            : state.isBackgroundActive
-                                ? "Background mode: Native service handling gestures"
-                                : gestureConfigs[currentGesture]?.label || "Waiting for gesture..."}
+                            : state.status === "camera_lost"
+                                ? "Camera connection lost - attempting recovery..."
+                                : state.isBackgroundActive
+                                    ? "Background mode: Native service handling gestures"
+                                    : gestureConfigs[currentGesture]?.label || "Waiting for gesture..."}
                     </Text>
 
                     {state.isRunning &&
@@ -792,9 +959,14 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
 
                     {state.isRunning &&
                         !state.isBackgroundActive &&
-                        (!currentGesture || currentGesture === "none") && (
+                        (!currentGesture || currentGesture === "none") &&
+                        state.status !== "camera_lost" && (
                             <ActivityIndicator size="large" color={colors.primary} />
                         )}
+
+                    {state.status === "camera_lost" && (
+                        <MaterialCommunityIcons name="camera-off" size={60} color="#FF5722" />
+                    )}
                 </View>
 
                 <TouchableOpacity

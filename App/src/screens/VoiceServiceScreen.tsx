@@ -5,6 +5,8 @@ import AudioRecord from 'react-native-audio-record';
 import { Buffer } from 'buffer';
 import { handleContinuousScrollDown, handleContinuousScrollUp, handlegoHome, handleOpenApp, handleReturn, handleScrollDown, handleScrollUp, handleShowRecentApps, handleStopScrolling, handleSwipeLeft, handleSwipeRight, handleTap } from '../features/actions';
 import BackgroundService from 'react-native-background-actions'; // Add this package
+import { askMicrophonePermission, handlePermissionBlocked } from '../utils/permissions';
+import { API_KEYS } from '../constants/api_keys';
 
 interface VoiceServiceProps {
   apiKey?: string;
@@ -29,15 +31,14 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
   const [partialTranscript, setPartialTranscript] = useState<string>('');
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [sessionId, setSessionId] = useState<string>('');
-  const [restartAttempt, setRestartAttempt] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const isRecordingRef = useRef<boolean>(false);
   const dataListenerRef = useRef<any>(null);
   const audioBufferRef = useRef<Uint8Array>(new Uint8Array(0)); // Buffer for accumulating audio data
   const bufferSizeRef = useRef<number>(0); // Track current buffer size
   const appStateRef = useRef(AppState.currentState);
-  const restartPendingRef = useRef(false);
-  const ASSEMBLY_AI_API_KEY = apiKey || "YOUR_API_KEY";
+  const ASSEMBLY_AI_API_KEY = apiKey || API_KEYS.ASSEMBLY_AI;
+
 
   const backgroundTaskOptions = {
     taskName: 'VoiceCommandService',
@@ -62,7 +63,7 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     wavFile: 'audio.wav',
   };
 
-  const targetWords = ['stop', 'open app', 'tap', 'swipe left', 'swipe right', 'continuous scroll up', 'scroll up', 'continuous scroll down', 'scroll down', 'stop scrolling', 'go home', 'show recent apps', 'go back'];
+  const targetWords = ['stop', 'open app', 'tap', 'swipe left', 'swipe right', 'hands up', 'scroll up', 'hands down', 'scroll down', 'surrender', 'go home', 'show recent apps', 'go back'];
 
   // Calculate required buffer size for 50ms of audio (minimum required by AssemblyAI)
   const SAMPLES_PER_50MS = (16000 * 0.05) * 2; // 1600 bytes (16000 samples/sec * 0.05s * 2 bytes/sample)
@@ -72,6 +73,12 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
 
   useEffect(() => {
     // Setup background service
+
+    const checkPermissions = async () => {
+      await requestMic();
+    };
+    checkPermissions();
+
     const setupBackgroundService = async () => {
       try {
         await BackgroundService.start(async () => {
@@ -238,6 +245,9 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
 
         try {
           switch (phrase) {
+            case "stop":
+              await stopListening();
+              break;
             case "tap":
               await handleTap(0, 0);
               break;
@@ -250,17 +260,17 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
             case "scroll up":
               await handleScrollUp();
               break;
-            case "continuous scroll up":
+            case "hands up":
               await handleContinuousScrollUp();
               break;
 
             case "scroll down":
               await handleScrollDown();
               break;
-            case "continuous scroll down":
+            case "hands down":
               await handleContinuousScrollDown();
               break;
-            case "stop scrolling":
+            case "surrender":
               await handleStopScrolling();
               break;
             case "go home":
@@ -292,12 +302,6 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     return null;
   };
 
-  useEffect(() => {
-    if (restartAttempt > 0) {
-      console.log("🚀 Restarting audio system...");
-      startListening();
-    }
-  }, [restartAttempt]);
 
   const formatTimestamp = (timestamp: number) => {
     return new Date(timestamp * 1000).toISOString();
@@ -307,7 +311,38 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     return new Uint8Array(Buffer.from(base64, 'base64'));
   };
 
+  const requestMic = async () => {
+    const status = await askMicrophonePermission({
+      title: 'Voice Recording Permission',
+      message: 'We need microphone access for voice features',
+      buttonPositive: 'Enable',
+      buttonNegative: 'Not Now'
+    });
+
+    if (status === 'granted') {
+      // Start microphone operations
+    } else if (status === 'never_ask_again') {
+      // Show custom message with instructions
+      handlePermissionBlocked('microphone')
+    }
+  };
+
+  
   const startListening = async () => {
+    const status = await askMicrophonePermission({
+      title: 'Voice Recording Permission',
+      message: 'We need microphone access for voice features',
+      buttonPositive: 'Enable',
+      buttonNegative: 'Not Now'
+    });
+
+    if (status !== 'granted') {
+      if (status === 'never_ask_again') {
+        handlePermissionBlocked();
+      }
+      return;
+    }
+
     if (!ASSEMBLY_AI_API_KEY) {
       Alert.alert('Error', 'AssemblyAI API key is required');
       return;
