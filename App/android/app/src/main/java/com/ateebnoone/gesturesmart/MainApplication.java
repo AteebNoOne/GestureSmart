@@ -22,7 +22,6 @@ import java.util.List;
 
 import com.ateebnoone.gesturesmart.GesturePackage;
 import com.ateebnoone.gesturesmart.GestureActionsPackage;
-// import com.ateebnoone.gesturesmart.VoiceServicePackage;
 
 public class MainApplication extends Application implements ReactApplication {
   private final ReactNativeHost mReactNativeHost = new ReactNativeHostWrapper(

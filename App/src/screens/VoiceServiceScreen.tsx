@@ -63,7 +63,19 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     wavFile: 'audio.wav',
   };
 
-  const targetWords = ['stop', 'open app', 'tap', 'swipe left', 'swipe right', 'hands up', 'scroll up', 'hands down', 'scroll down', 'surrender', 'go home', 'show recent apps', 'go back'];
+  const targetWords = ['stop',
+    'open app',
+    'tap',
+    'swipe left',
+    'swipe right',
+    'hands up',
+    'scroll up',
+    'hands down',
+    'scroll down',
+    'surrender',
+    'go home',
+    'show recent apps',
+    'go back'];
 
   // Calculate required buffer size for 50ms of audio (minimum required by AssemblyAI)
   const SAMPLES_PER_50MS = (16000 * 0.05) * 2; // 1600 bytes (16000 samples/sec * 0.05s * 2 bytes/sample)
@@ -327,7 +339,7 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     }
   };
 
-  
+
   const startListening = async () => {
     const status = await askMicrophonePermission({
       title: 'Voice Recording Permission',

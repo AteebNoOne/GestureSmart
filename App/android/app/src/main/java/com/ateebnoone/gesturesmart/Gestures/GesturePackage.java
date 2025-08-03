@@ -19,6 +19,7 @@ public class GesturePackage implements ReactPackage {
     public List<NativeModule> createNativeModules(ReactApplicationContext reactContext) {
         List<NativeModule> modules = new ArrayList<>();
         modules.add(new GestureModule(reactContext));
+        modules.add(new BatteryOptimizationModule(reactContext));
         return modules;
     }
 }

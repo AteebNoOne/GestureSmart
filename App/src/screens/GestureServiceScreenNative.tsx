@@ -62,6 +62,7 @@ interface AppState {
 
 // Native module interface
 const GestureServiceModule = NativeModules.GestureService;
+const { BatteryOptimization } = NativeModules;
 
 // Configure notifications for background mode
 Notifications.setNotificationHandler({
@@ -82,7 +83,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
     const cameraHealthCheckInterval = useRef<NodeJS.Timeout | null>(null);
     const serviceRestartAttempts = useRef<number>(0);
     const maxRestartAttempts = 3;
-    
+
     const [handDetectionStatus, setHandDetectionStatus] = useState({
         status: 'no_hands',
         landmarkCount: 0,
@@ -90,7 +91,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         lastUpdate: 0,
         isActive: false
     });
-    
+
     // State
     const [currentGesture, setCurrentGesture] = useState<string>("none");
     const [backgroundPermissionGranted, setBackgroundPermissionGranted] = useState<boolean>(false);
@@ -147,7 +148,6 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         }
     }, []);
 
-    // Enhanced Android 14 permission request
     const requestAndroidPermissions = useCallback(async (): Promise<void> => {
         try {
             if (Platform.OS === 'android') {
@@ -155,6 +155,8 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     'android.permission.CAMERA',
                     'android.permission.WAKE_LOCK',
                 ];
+
+
 
                 // Android 14 specific permissions
                 if (Platform.Version >= 28) {
@@ -173,6 +175,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                 const allGranted = Object.values(results).every(
                     result => result === PermissionsAndroid.RESULTS.GRANTED
                 );
+                console.log("all granted", allGranted)
 
                 if (allGranted) {
                     await requestNotificationPermission();
@@ -181,11 +184,11 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     setCameraPermissionDenied(false);
                 } else {
                     const cameraPermission = results['android.permission.CAMERA'];
-                    if (cameraPermission === PermissionsAndroid.RESULTS.DENIED || 
+                    if (cameraPermission === PermissionsAndroid.RESULTS.DENIED ||
                         cameraPermission === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) {
                         setCameraPermissionDenied(true);
                     }
-                    
+
                     Alert.alert(
                         'Permissions Required',
                         'Android 14 requires all permissions for background gesture detection. Please enable them in Settings.',
@@ -234,7 +237,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     allowSound: false,
                 },
             });
-            
+
             if (status !== 'granted') {
                 Alert.alert(
                     'Notification Permission',
@@ -255,7 +258,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
 
         cameraHealthCheckInterval.current = setInterval(() => {
             const timeSinceLastUpdate = Date.now() - handDetectionStatus.lastUpdate;
-            
+
             // If no camera updates for 5 seconds while service is running
             if (state.isRunning && timeSinceLastUpdate > 5000 && handDetectionStatus.lastUpdate > 0) {
                 console.warn('Camera feed appears to be lost - attempting restart');
@@ -283,21 +286,21 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
         try {
             // Stop service
             await GestureServiceModule.stopService();
-            
+
             // Wait a moment
             await new Promise(resolve => setTimeout(resolve, 2000));
-            
+
             // Restart service
             await GestureServiceModule.startService();
-            
+
             safeSetState(prev => ({ ...prev, status: "running" }));
             console.log('Service restarted successfully');
-            
+
             // Reset attempts counter on successful restart
             setTimeout(() => {
                 serviceRestartAttempts.current = 0;
             }, 30000); // Reset after 30 seconds of stable operation
-            
+
         } catch (error) {
             console.error('Service restart failed:', error);
             safeSetState(prev => ({ ...prev, status: "error" }));
@@ -343,12 +346,12 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                                 lastUpdate: Date.now(),
                                 isActive: data.status === 'hand_detected'
                             });
-                            
+
                             // Reset camera loss status if we're getting updates
                             if (state.status === "camera_lost") {
-                                safeSetState(prev => ({ 
-                                    ...prev, 
-                                    status: prev.isBackgroundActive ? "background" : "running" 
+                                safeSetState(prev => ({
+                                    ...prev,
+                                    status: prev.isBackgroundActive ? "background" : "running"
                                 }));
                             }
                         }
@@ -399,7 +402,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
     const getHandDetectionStatusText = useCallback(() => {
         const timeSinceUpdate = Date.now() - handDetectionStatus.lastUpdate;
 
-        if (timeSinceUpdate > 5000) {
+        if (timeSinceUpdate > 10000) {
             return "⚠️ Camera feed lost - attempting recovery";
         }
 
@@ -438,7 +441,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                         isBackgroundActive: false,
                         status: "running"
                     }));
-                    
+
                     // Clear health check when in foreground
                     if (cameraHealthCheckInterval.current) {
                         clearInterval(cameraHealthCheckInterval.current);
@@ -513,11 +516,18 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
 
     // Enhanced service toggle with Android 14 considerations
     const toggleService = useCallback(async (): Promise<void> => {
+        const isIgnoring = await BatteryOptimization.checkBatteryOptimization();
+        if (!isIgnoring) {
+            // Request to disable battery optimization
+            await BatteryOptimization.requestIgnoreBatteryOptimization();
+            // Also open auto-start settings for manufacturer-specific settings
+            await BatteryOptimization.openAutoStartSettings();
+        }
         try {
             if (!backgroundPermissionGranted || cameraPermissionDenied) {
                 Alert.alert(
                     'Permissions Required',
-                    Platform.Version >= 34 
+                    Platform.Version >= 34
                         ? 'Android 14 requires camera and foreground service permissions for background gesture detection.'
                         : 'Please grant all required permissions for background gesture detection.',
                     [
@@ -532,7 +542,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
             if (!state.isRunning) {
                 // Reset restart attempts
                 serviceRestartAttempts.current = 0;
-                
+
                 // Start native service
                 try {
                     await GestureServiceModule.startService();
@@ -541,7 +551,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                         isRunning: true,
                         status: "running",
                     }));
-                    
+
                     // Start health monitoring if in background
                     if (AppState.currentState !== 'active') {
                         startCameraHealthCheck();
@@ -550,7 +560,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     console.error('Failed to start native service:', error);
                     Alert.alert(
                         'Service Start Failed',
-                        Platform.Version >= 34 
+                        Platform.Version >= 34
                             ? 'Unable to start gesture service. Please check Android 14 foreground service permissions.'
                             : 'Unable to start gesture service. Please check permissions.',
                         [{ text: 'OK' }]
@@ -565,7 +575,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                         clearInterval(cameraHealthCheckInterval.current);
                         cameraHealthCheckInterval.current = null;
                     }
-                    
+
                     // Make sure cursor is closed before stopping service
                     const GestureActions = NativeModules.GestureActions;
                     try {
@@ -873,7 +883,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                     • Current Gesture: {currentGesture}{'\n'}
                     • Restart Attempts: {serviceRestartAttempts.current}/{maxRestartAttempts}
                 </Text>
-                
+
                 {state.status === "camera_lost" && (
                     <TouchableOpacity style={styles.restartButton} onPress={handleCameraLoss}>
                         <Text style={styles.restartButtonText}>Manual Restart</Text>
@@ -913,7 +923,7 @@ const GestureServiceNative: React.FC<GestureScreenProps> = ({ navigation }) => {
                 {(!backgroundPermissionGranted || cameraPermissionDenied) && (
                     <View style={styles.permissionContainer}>
                         <Text style={styles.permissionText}>
-                            {Platform.Version >= 34 
+                            {Platform.Version >= 34
                                 ? "Android 14 requires camera, foreground service, and notification permissions for background gesture detection"
                                 : "Background permissions required for gesture detection when app is not active"
                             }
