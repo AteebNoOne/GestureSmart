@@ -257,6 +257,6 @@ userRouter.route("/user")
     .put(uploadProfileImage.fields([{ name: 'profileImage', maxCount: 1 }]), authenticateUser(false), updateUser)
     .delete(authenticateUser(false), deleteUser);
 
-userRouter.post("/user/emailAvailiblity", emailAvailiblity);
+userRouter.post("/emailAvailiblity", emailAvailiblity);
 
 export default userRouter;

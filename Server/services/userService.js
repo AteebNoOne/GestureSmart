@@ -54,7 +54,7 @@ class UserService {
             };
 
         } catch (error) {
-            console.log("Error?",error)
+            console.log("Error?", error)
             await session.abortTransaction();
             throw error;
         } finally {
@@ -158,7 +158,7 @@ class UserService {
         }
 
         const token = user.getJWTToken();
-        return { user, token,success:true };
+        return { user, token, success: true };
     }
 
     async validateEmail(email) {
@@ -168,7 +168,7 @@ class UserService {
         }
         return true; // Indicate email is available
     }
-    
+
 }
 
 export const userService = new UserService();

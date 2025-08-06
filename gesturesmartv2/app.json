@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "gesturesmartv2",
-    "slug": "gesturesmartv2",
-    "version": "1.0.0",
+    "name": "GestureSmart",
+    "slug": "gesturesmart",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -17,14 +17,14 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.ateebnoone.gesturesmartv2"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/icon.png"
     }
   }
 }

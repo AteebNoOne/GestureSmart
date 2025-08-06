@@ -1,177 +1,31 @@
 package com.ateebnoone.gesturesmartv2;
 
 import android.content.Intent;
-import android.os.Build;
 import android.util.Log;
 
-import com.facebook.react.bridge.Arguments;
-import com.facebook.react.bridge.LifecycleEventListener;
-import com.facebook.react.bridge.Promise;
+import androidx.annotation.NonNull;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
+
+import com.facebook.react.bridge.ReactContext;
+
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.bridge.Arguments;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 
-import java.util.HashMap;
-import java.util.Map;
-
-public class GestureModule extends ReactContextBaseJavaModule implements LifecycleEventListener {
+public class GestureModule extends ReactContextBaseJavaModule {
     private static final String TAG = "GestureModule";
-    private final ReactApplicationContext reactContext;
-    private boolean isServiceRunning = false;
+    private ReactApplicationContext reactContext;
+    private static GestureModule instance;
 
-    private static final String EVENT_NAME = "onGestureDetected";
-    public static final String HAND_DETECTION_EVENT_NAME = "onHandDetection";
-
-    public GestureModule(ReactApplicationContext context) {
-        super(context);
-        this.reactContext = context;
-        reactContext.addLifecycleEventListener(this);
-    }
-
-    @Override
-    public String getName() {
-        return "GestureService";
-    }
-
-    // --- Lifecycle Cleanup ---
-    @Override
-    public void onHostDestroy() {
-        Log.i(TAG, "React Host is being destroyed. Cleaning up gesture service.");
-        try {
-            stopGestureService(); // internally sets isServiceRunning = false
-        } catch (Exception e) {
-            Log.e(TAG, "Cleanup error: " + e.getMessage());
-        }
-    }
-
-    @Override
-    public void onHostResume() {
-        // Optional: Handle resume logic if needed
-    }
-
-    @Override
-    public void onHostPause() {
-        // Optional: Handle pause logic if needed
-    }
-
-    // --- Service Control Methods ---
-
-    @ReactMethod
-    public void startService(Promise promise) {
-        try {
-            Intent serviceIntent = new Intent(reactContext, GestureService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                reactContext.startForegroundService(serviceIntent);
-            } else {
-                reactContext.startService(serviceIntent);
-            }
-            isServiceRunning = true;
-            promise.resolve("Service started successfully");
-            Log.i(TAG, "Gesture service started via React Native");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to start service", e);
-            promise.reject("ERROR", "Failed to start service: " + e.getMessage());
-        }
-    }
-
-    @ReactMethod
-    public void stopService(Promise promise) {
-        try {
-            stopGestureService();
-            promise.resolve("Service stopped successfully");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to stop service", e);
-            promise.reject("ERROR", "Failed to stop service: " + e.getMessage());
-        }
-    }
-
-    private void stopGestureService() {
-        Intent serviceIntent = new Intent(reactContext, GestureService.class);
-        reactContext.stopService(serviceIntent);
-        isServiceRunning = false;
-        Log.i(TAG, "Gesture service stopped");
-    }
-
-    @ReactMethod
-    public void isServiceRunning(Promise promise) {
-        promise.resolve(isServiceRunning);
-    }
-
-    // --- Gesture Event Emitters ---
-
-    public void sendEvent(String gestureType) {
-        try {
-            if (!reactContext.hasActiveCatalystInstance()) {
-                Log.w(TAG, "No active React context. Skipping gesture event.");
-                return;
-            }
-
-            WritableMap params = Arguments.createMap();
-            params.putString("gesture", gestureType);
-            params.putDouble("timestamp", System.currentTimeMillis());
-
-            if ("tap_at_cursor".equals(gestureType)) {
-                GestureActions actions = getGestureActionsInstance();
-                if (actions != null) {
-                    actions.performTapAtCursor();
-                    Log.i(TAG, "Performed tap at cursor");
-                } else {
-                    Log.w(TAG, "GestureActions instance not available for tap_at_cursor");
-                }
-            }
-
-            reactContext
-                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                    .emit(EVENT_NAME, params);
-
-            Log.d(TAG, "Gesture event sent: " + gestureType);
-        } catch (Exception e) {
-            Log.e(TAG, "Error sending gesture event: " + e.getMessage(), e);
-        }
-    }
-
-    public void sendHandDetectionEvent(String status, int landmarkCount, float confidence) {
-        try {
-            if (!reactContext.hasActiveCatalystInstance()) {
-                Log.w(TAG, "No active React context. Skipping hand detection event.");
-                return;
-            }
-
-            WritableMap params = Arguments.createMap();
-            params.putString("status", status);
-            params.putInt("landmarkCount", landmarkCount);
-            params.putDouble("confidence", confidence);
-            params.putDouble("timestamp", System.currentTimeMillis());
-
-            reactContext
-                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                    .emit(HAND_DETECTION_EVENT_NAME, params);
-
-            Log.v(TAG, String.format("Hand detection event: %s (landmarks: %d, confidence: %.2f)",
-                    status, landmarkCount, confidence));
-        } catch (Exception e) {
-            Log.e(TAG, "Error sending hand detection event: " + e.getMessage(), e);
-        }
-    }
-
-    // --- GestureActions Accessor ---
-
-    private GestureActions getGestureActionsInstance() {
-        try {
-            return GestureActionsHolder.getInstance();
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to get GestureActions instance", e);
-            return null;
-        }
-    }
-
+    // Inner class to hold GestureActions instance
     public static class GestureActionsHolder {
         private static GestureActions instance;
 
-        public static void setInstance(GestureActions gestureActions) {
-            instance = gestureActions;
+        public static void setInstance(GestureActions actions) {
+            instance = actions;
         }
 
         public static GestureActions getInstance() {
@@ -179,22 +33,104 @@ public class GestureModule extends ReactContextBaseJavaModule implements Lifecyc
         }
     }
 
-    // --- Constants for JS ---
-
-    @Override
-    public Map<String, Object> getConstants() {
-        final Map<String, Object> constants = new HashMap<>();
-        constants.put("EVENT_NAME", EVENT_NAME);
-        constants.put("HAND_DETECTION_EVENT_NAME", HAND_DETECTION_EVENT_NAME);
-        return constants;
+    public static GestureModule getInstance() {
+        return instance;
     }
 
-    // Required by React Native event system
+    public GestureModule(ReactApplicationContext reactContext) {
+        super(reactContext);
+        this.reactContext = reactContext;
+        instance = this;
+        Log.i(TAG, "GestureModule initialized");
+    }
+
+    @Override
+    public void initialize() {
+        super.initialize();
+        notifyContextAvailable();
+    }
+
+    private void notifyContextAvailable() {
+        Intent intent = new Intent("REACT_CONTEXT_AVAILABLE");
+        LocalBroadcastManager.getInstance(getReactApplicationContext()).sendBroadcast(intent);
+    }
+
+    @NonNull
+    @Override
+    public String getName() {
+        return "GestureService";
+    }
+
+    @ReactMethod
+    public void startService() {
+        Log.i(TAG, "Starting gesture service");
+        try {
+            Intent serviceIntent = new Intent(reactContext, GestureService.class);
+            reactContext.startForegroundService(serviceIntent);
+            Log.i(TAG, "Gesture service start command sent");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start gesture service: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    @ReactMethod
+    public void stopService() {
+        Log.i(TAG, "Stopping gesture service");
+        try {
+            Intent serviceIntent = new Intent(reactContext, GestureService.class);
+            reactContext.stopService(serviceIntent);
+            Log.i(TAG, "Gesture service stop command sent");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to stop gesture service: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
     @ReactMethod
     public void addListener(String eventName) {
+        // Required for RN built in Event Emitter Calls.
+        Log.d(TAG, "Added listener for: " + eventName);
     }
 
     @ReactMethod
     public void removeListeners(Integer count) {
+        // Required for RN built in Event Emitter Calls.
+        Log.d(TAG, "Removed " + count + " listeners");
+    }
+
+    // This method will be called by the GestureService to send events
+    public void sendGestureEvent(String eventType) {
+        Log.i(TAG, "Sending gesture event: " + eventType);
+
+        if (reactContext != null && reactContext.hasActiveCatalystInstance()) {
+            try {
+                WritableMap params = Arguments.createMap();
+                params.putString("event", eventType);
+                params.putLong("timestamp", System.currentTimeMillis());
+
+                reactContext
+                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                        .emit("onGestureEvent", params);
+
+                Log.i(TAG, "Gesture event sent successfully through module: " + eventType);
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to send gesture event through module: " + e.getMessage());
+                e.printStackTrace();
+                throw new RuntimeException("Failed to send gesture event", e);
+            }
+        } else {
+            String error = "Cannot send gesture event - React context not available";
+            Log.e(TAG, error);
+            throw new RuntimeException(error);
+        }
+    }
+
+    public boolean isReactContextReady() {
+        return reactContext != null && reactContext.hasActiveCatalystInstance();
+    }
+
+    public ReactContext getContext() {
+        return reactContext;
     }
 }

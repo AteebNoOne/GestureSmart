@@ -26,6 +26,7 @@ class MainApplication : Application(), ReactApplication {
             // Packages that cannot be autolinked yet can be added manually here, for example:
             packages.add(GesturePackage())
             packages.add(GestureActionsPackage())
+            packages.add(EyePackage())
             // packages.add(MyReactNativePackage())
             return packages
           }

@@ -4,8 +4,19 @@ import { userService } from "../services/userService.js";
 
 
 export const emailAvailiblity = asyncHandler(async (req, res) => {
-    const result = await userService.validateEmail(req.body.email);
-    res.status(200).json({ available: result });
+    try {
+        console.log("Called")
+        const result = await userService.validateEmail(req.body.email);
+
+        res.status(200).json({ available: result });
+    }
+    catch (error) {
+        console.log(error, "Called")
+
+        res.status(500).json({ available: false, message: "Email already exist!" });
+
+    }
+
 });
 
 
@@ -33,7 +44,7 @@ export const getAllUsers = asyncHandler(async (req, res) => {
 
 export const updateUser = asyncHandler(async (req, res) => {
     const updates = { ...req.body };
-    
+
     if (req.files?.profileImage) {
         const profileImageUrl = await uploadImageToCloudinary(req.files.profileImage[0].path);
         updates.profileImage = profileImageUrl;
