@@ -8,6 +8,7 @@ import {
   ViewStyle,
   StyleProp,
   TouchableOpacity,
+  Animated,
   Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -31,43 +32,47 @@ export interface InputProps extends Omit<TextInputProps, 'style'> {
   type?: 'text' | 'email' | 'password' | 'number';
 }
 
-export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
-  const {
-    label,
-    error,
-    hint,
-    leftIcon,
-    rightIcon,
-    variant = 'default',
-    containerStyle,
-    inputStyle,
-    required,
-    onRightIconPress,
-    onLeftIconPress,
-    type = 'text',
-    value,
-    onChangeText,
-    placeholder,
-    ...rest
-  } = props;
-
+export const Input = forwardRef<TextInput, InputProps>(({
+  label,
+  error,
+  hint,
+  leftIcon,
+  rightIcon,
+  variant = 'default',
+  containerStyle,
+  inputStyle,
+  required,
+  onRightIconPress,
+  onLeftIconPress,
+  type = 'text',
+  value,
+  onChangeText,
+  placeholder,
+  ...rest
+}, ref) => {
   const { colors } = useTheme();
   const [isFocused, setIsFocused] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Simple focus/blur handlers
-  const handleFocus = (e: any) => {
+  // Animation for focus effect
+  const [focusAnim] = useState(new Animated.Value(0));
+
+  const handleFocus = () => {
     setIsFocused(true);
-    if (rest.onFocus) {
-      rest.onFocus(e);
-    }
+    Animated.timing(focusAnim, {
+      toValue: 1,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
   };
 
-  const handleBlur = (e: any) => {
+  const handleBlur = () => {
     setIsFocused(false);
-    if (rest.onBlur) {
-      rest.onBlur(e);
-    }
+    Animated.timing(focusAnim, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
   };
 
   const styles = StyleSheet.create({
@@ -90,12 +95,11 @@ export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
     inputContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      borderWidth: variant === 'outlined' ? 1 : variant === 'default' ? 1 : 0,
+      borderWidth: variant === 'outlined' ? 1 : 0,
       borderRadius: spacing.sm,
       backgroundColor: variant === 'filled' ? colors.surface : 'transparent',
       borderColor: error ? colors.error : isFocused ? colors.primary : colors.border,
       overflow: 'hidden',
-      minHeight: Platform.OS === 'ios' ? 44 : 48,
     },
     input: {
       flex: 1,
@@ -104,6 +108,14 @@ export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
       fontSize: typography.fontSize.md,
       fontFamily: typography.fontFamily.regular,
       color: colors.text,
+      ...Platform.select({
+        ios: {
+          minHeight: 44,
+        },
+        android: {
+          minHeight: 48,
+        },
+      }),
     },
     icon: {
       padding: spacing.sm,
@@ -121,15 +133,16 @@ export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
       fontFamily: typography.fontFamily.regular,
       marginTop: spacing.xs,
     },
-    // Simple focus indicator
-    focusIndicator: {
+    focusLine: {
       position: 'absolute',
       bottom: 0,
       left: 0,
       right: 0,
       height: 2,
       backgroundColor: error ? colors.error : colors.primary,
-      opacity: isFocused ? 1 : 0,
+      transform: [{
+        scaleX: focusAnim,
+      }],
     },
   });
 
@@ -162,34 +175,6 @@ export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
     );
   };
 
-  // Determine accessibility properties based on input type
-  const getAccessibilityProps = () => {
-    const baseProps = {
-      accessible: true,
-      accessibilityRole: 'none' as const,
-    };
-
-    switch (type) {
-      case 'email':
-        return {
-          ...baseProps,
-          accessibilityLabel: `${label || 'Email'} input field. ${required ? 'Required.' : ''}`,
-          accessibilityHint: 'Enter your email address'
-        };
-      case 'password':
-        return {
-          ...baseProps,
-          accessibilityLabel: `${label || 'Password'} input field. ${required ? 'Required.' : ''}`,
-          accessibilityHint: 'Enter your password. Double tap to show or hide password'
-        };
-      default:
-        return {
-          ...baseProps,
-          accessibilityLabel: `${label || 'Text'} input field. ${required ? 'Required.' : ''}`
-        };
-    }
-  };
-
   return (
     <View style={[styles.container, containerStyle]}>
       {label && (
@@ -215,8 +200,6 @@ export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
           secureTextEntry={type === 'password' && !showPassword}
           autoCapitalize={type === 'email' ? 'none' : 'sentences'}
           autoCorrect={type === 'password' ? false : true}
-          blurOnSubmit={false}
-          {...getAccessibilityProps()}
           {...rest}
         />
 
@@ -224,8 +207,6 @@ export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
           <TouchableOpacity
             onPress={() => setShowPassword(!showPassword)}
             style={styles.icon}
-            accessibilityLabel={showPassword ? "Hide password" : "Show password"}
-            accessibilityRole="button"
           >
             <MaterialCommunityIcons
               name={showPassword ? 'eye-off' : 'eye'}
@@ -236,18 +217,14 @@ export const Input = forwardRef<TextInput, InputProps>((props, ref) => {
         ) : renderIcon(rightIcon, onRightIconPress)}
 
         {variant === 'default' && (
-          <View style={styles.focusIndicator} />
+          <Animated.View style={styles.focusLine} />
         )}
       </View>
 
       {error ? (
-        <Text style={styles.errorText} accessibilityLabel={`Error: ${error}`}>
-          {error}
-        </Text>
+        <Text style={styles.errorText}>{error}</Text>
       ) : hint ? (
-        <Text style={styles.hintText} accessibilityHint={hint}>
-          {hint}
-        </Text>
+        <Text style={styles.hintText}>{hint}</Text>
       ) : null}
     </View>
   );

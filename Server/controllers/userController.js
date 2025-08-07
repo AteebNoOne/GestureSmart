@@ -1,19 +1,18 @@
 import { asyncHandler } from "../middleware/asyncHandler.js";
 import { uploadImageToCloudinary } from "../helpers/uploadImage.js";
 import { userService } from "../services/userService.js";
+import { resetPassword, sendOtp, verifyOtp } from "../services/otpService.js";
 
 
 export const emailAvailiblity = asyncHandler(async (req, res) => {
     try {
-        console.log("Called")
         const result = await userService.validateEmail(req.body.email);
 
         res.status(200).json({ available: result });
     }
     catch (error) {
-        console.log(error, "Called")
 
-        res.status(500).json({ available: false, message: "Email already exist!" });
+        res.status(400).json({ available: false, message: "Email already exist!" });
 
     }
 
@@ -57,4 +56,31 @@ export const updateUser = asyncHandler(async (req, res) => {
 export const deleteUser = asyncHandler(async (req, res) => {
     const result = await userService.deleteUser(req.user._id);
     res.status(200).json(result);
+});
+
+export const forgotPassword = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+
+    const user = await sendOtp(email, "password-change");
+    res.status(200).json({ success: true, user });
+});
+
+
+export const verifyUserOtp = asyncHandler(async (req, res) => {
+    const { email, otp, type } = req.body; // Add type to the request body
+
+    // Verify OTP with the specific type
+    const user = await verifyOtp(email, otp, type);
+
+    res.status(200).json({
+        success: true,
+        user,
+        message: `OTP verified for ${type || 'general'} purpose`
+    });
+});
+
+export const resetUserPassword = asyncHandler(async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+    const user = await resetPassword(email, otp, newPassword);
+    res.status(200).json({ success: true, user });
 });

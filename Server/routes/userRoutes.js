@@ -5,7 +5,10 @@ import {
     deleteUser,
     getUserProfile,
     userLogin,
-    emailAvailiblity
+    emailAvailiblity,
+    forgotPassword,
+    verifyUserOtp,
+    resetUserPassword
 } from "../controllers/userController.js";
 import authenticateUser from "../middleware/authenticateUser.js";
 import multer from "multer";
@@ -256,6 +259,15 @@ userRouter.route("/user")
     .get(authenticateUser(false), getUserProfile)
     .put(uploadProfileImage.fields([{ name: 'profileImage', maxCount: 1 }]), authenticateUser(false), updateUser)
     .delete(authenticateUser(false), deleteUser);
+
+userRouter.route("/user/forgot-password")
+    .post(forgotPassword)
+
+userRouter.route("/user/verify-otp")
+    .post(verifyUserOtp)
+
+userRouter.route("/user/reset-password")
+    .post(resetUserPassword)
 
 userRouter.post("/emailAvailiblity", emailAvailiblity);
 

@@ -9,6 +9,7 @@ export interface User {
     age: number;
     phone: string;
     location: string;
+    createdAt?: string;
 }
 
 export interface UserState {

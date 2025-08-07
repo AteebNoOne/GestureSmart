@@ -13,6 +13,7 @@ import {
   Image,
   Alert,
   ImageRequireSource,
+  BackHandler,
 } from "react-native";
 import { EyeService, EyeEvent } from "../utils/eyeTrackingService"; // Updated import
 import {
@@ -24,7 +25,7 @@ import { useTheme } from "../hooks/useTheme";
 import { typography } from "../constants/theme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { NavigationProp } from "@react-navigation/native";
-import { handlegoHome, handleReturn, handleScrollDown, handleScrollUp, handleSwipeLeft, handleSwipeRight, handleTap } from "../features/actions";
+import { handlegoHome, handleReturn, handleScrollDown, handleScrollUp, handleSwipeLeft, handleSwipeRight } from "../features/actions";
 import { requestTrackingPermissions, showTrackingPermissionAlert } from "../utils/permissions";
 import { HeaderNavigation } from "../components/HeaderBackNavigation";
 
@@ -49,7 +50,7 @@ interface AppLocalState {
   status: "initializing" | "stopped" | "running" | "background" | "error" | "camera_lost";
 }
 
-const EyeTracking: React.FC<EyeTrackingScreenProps> = () => {
+const EyeTracking: React.FC<EyeTrackingScreenProps> = ({ navigation }) => {
   // Refs
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -110,6 +111,112 @@ const EyeTracking: React.FC<EyeTrackingScreenProps> = () => {
       setState(updater);
     }
   }, []);
+
+  // Stop service function
+  const stopService = useCallback(async (): Promise<void> => {
+    try {
+      console.log('Stopping eye tracking service...');
+      if (cameraHealthCheckInterval.current) {
+        clearInterval(cameraHealthCheckInterval.current);
+        cameraHealthCheckInterval.current = null;
+      }
+
+      await EyeService.stopService();
+      safeSetState((prev) => ({
+        ...prev,
+        isRunning: false,
+        status: "stopped",
+        isBackgroundActive: false,
+      }));
+      setCurrentEvent("none");
+
+      console.log('Eye tracking service stopped successfully');
+    } catch (error) {
+      console.error('Failed to stop service:', error);
+    }
+  }, [safeSetState]);
+
+  // Back handler
+  const handleBackPress = useCallback((): boolean => {
+    if (state.isRunning) {
+      Alert.alert(
+        "Eye Tracking Active",
+        "Eye tracking service is currently running. Are you sure you want to go back? This will stop the service.",
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => {
+              console.log("Back navigation cancelled - service continues running");
+            },
+          },
+          {
+            text: "Yes, Stop & Go Back",
+            style: "destructive",
+            onPress: async () => {
+              console.log("Stopping service and navigating back");
+              await stopService();
+              navigation.goBack();
+            },
+          },
+        ],
+        { cancelable: false }
+      );
+      return true; // Prevent default back behavior
+    }
+    return false; // Allow default back behavior when service is not running
+  }, [state.isRunning, stopService, navigation]);
+
+  // BackHandler effect
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      handleBackPress
+    );
+
+    return () => backHandler.remove();
+  }, [handleBackPress]);
+
+  // Focus effect to handle navigation back button
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (!state.isRunning) {
+        // If service is not running, allow normal navigation
+        return;
+      }
+
+      // Prevent default behavior of leaving the screen
+      e.preventDefault();
+
+      // Show confirmation dialog
+      Alert.alert(
+        'Eye Tracking Active',
+        'Eye tracking service is currently running. Are you sure you want to go back? This will stop the service.',
+        [
+          {
+            text: "Cancel",
+            style: "cancel",
+            onPress: () => {
+              console.log("Navigation cancelled - service continues running");
+            },
+          },
+          {
+            text: "Yes, Stop & Go Back",
+            style: "destructive",
+            onPress: async () => {
+              console.log("Stopping service and navigating back");
+              await stopService();
+              // Re-dispatch the action after stopping the service
+              navigation.dispatch(e.data.action);
+            },
+          },
+        ],
+        { cancelable: false }
+      );
+    });
+
+    return unsubscribe;
+  }, [navigation, state.isRunning, stopService]);
 
   // Android 14 permission request
   const requestAndroidPermissions = useCallback(async (): Promise<void> => {
@@ -364,26 +471,7 @@ const EyeTracking: React.FC<EyeTrackingScreenProps> = () => {
           );
         }
       } else {
-        try {
-          console.log('Stopping eye tracking service...');
-          if (cameraHealthCheckInterval.current) {
-            clearInterval(cameraHealthCheckInterval.current);
-            cameraHealthCheckInterval.current = null;
-          }
-
-          await EyeService.stopService();
-          safeSetState((prev) => ({
-            ...prev,
-            isRunning: false,
-            status: "stopped",
-            isBackgroundActive: false,
-          }));
-          setCurrentEvent("none");
-
-          console.log('Eye tracking service stopped successfully');
-        } catch (error) {
-          console.error('Failed to stop service:', error);
-        }
+        await stopService();
       }
     } catch (error) {
       console.error("Service toggle failed:", error);
@@ -395,6 +483,7 @@ const EyeTracking: React.FC<EyeTrackingScreenProps> = () => {
     state.isRunning,
     safeSetState,
     startCameraHealthCheck,
+    stopService,
   ]);
 
   // Status helpers
@@ -454,8 +543,6 @@ const EyeTracking: React.FC<EyeTrackingScreenProps> = () => {
 
     return "Eye tracking not active";
   }, [state.isRunning]);
-
-
 
   const styles = StyleSheet.create({
     safeArea: {

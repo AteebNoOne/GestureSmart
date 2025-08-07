@@ -1,4 +1,4 @@
-import { Alert,NativeModules, Platform } from 'react-native';
+import { Alert, NativeModules, Platform } from 'react-native';
 
 // Define types for the native module
 interface GestureActionsType {
@@ -16,6 +16,7 @@ interface GestureActionsType {
   continuousScrollDown(): Promise<boolean>;
   continuousScrollUp(): Promise<boolean>;
   stopScrolling(): Promise<boolean>;
+  takeSystemScreenshot(): Promise<boolean>;
 }
 
 const GestureActions = NativeModules.GestureActions as GestureActionsType;
@@ -182,6 +183,18 @@ export const handleOpenApp = async (appName: string): Promise<void> => {
     }
   } else {
     console.warn('GestureActions module not available or unsupported platform.');
+  }
+};
+
+export const handleTakeScreenshot = async (): Promise<void> => {
+  if (Platform.OS === 'android' && hasGestureActions(NativeModules)) {
+    try {
+      await GestureActions.takeSystemScreenshot();
+    } catch (error) {
+      console.error('Error takign screenshot:', error);
+      // If permission is needed, request it
+      await requestAccessibilityPermission();
+    }
   }
 };
 

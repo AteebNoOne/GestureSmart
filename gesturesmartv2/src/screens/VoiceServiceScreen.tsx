@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert, Platform, AppState, Ap
 import * as Speech from 'expo-speech';
 import AudioRecord from 'react-native-audio-record';
 import { Buffer } from 'buffer';
-import { handleContinuousScrollDown, handleContinuousScrollUp, handlegoHome, handleOpenApp, handleReturn, handleScrollDown, handleScrollUp, handleShowRecentApps, handleStopScrolling, handleSwipeLeft, handleSwipeRight, handleTap } from '../features/actions';
+import { handleContinuousScrollDown, handleContinuousScrollUp, handlegoHome, handleOpenApp, handleReturn, handleScrollDown, handleScrollUp, handleShowRecentApps, handleStopScrolling, handleSwipeLeft, handleSwipeRight, handleTakeScreenshot, handleTap } from '../features/actions';
 import BackgroundService from 'react-native-background-actions'; // Add this package
 import { askMicrophonePermission, handlePermissionBlocked } from '../utils/permissions';
 import { API_KEYS } from '../constants/api_keys';
@@ -66,7 +66,8 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     wavFile: 'audio.wav',
   };
 
-  const targetWords = ['stop',
+  const targetWords = [
+    'stop',
     'open app',
     'tap',
     'swipe left',
@@ -78,7 +79,10 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     'surrender',
     'go home',
     'show recent apps',
-    'go back'];
+    'go back',
+    'take screenshot'
+
+  ];
 
   // Calculate required buffer size for 50ms of audio (minimum required by AssemblyAI)
   const SAMPLES_PER_50MS = (16000 * 0.05) * 2; // 1600 bytes (16000 samples/sec * 0.05s * 2 bytes/sample)
@@ -296,6 +300,9 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
               break;
             case "go back":
               await handleReturn();
+              break;
+            case "take screenshot":
+              await handleTakeScreenshot()
               break;
             default:
               break;

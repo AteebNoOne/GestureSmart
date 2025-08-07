@@ -8,6 +8,7 @@ export type AuthStackParamList = {
   Login: undefined;
   Signup: undefined;
   Detection: undefined;
+  Forgot: undefined;
 };
 
 export type MainDrawerParamList = {

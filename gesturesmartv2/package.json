@@ -8,7 +8,10 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "doctor": "npx expo-doctor --verbose",
-    "postinstall": "npx expo install --check"
+    "postinstall": "npx expo install --check",
+    "backup-native": "node scripts/copy-native-complete.js backup",
+    "restore-native": "node scripts/copy-native-complete.js restore",
+    "prebuild": "yarn run backup-native && npx expo prebuild --clean && yarn run restore-native"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.1",
@@ -20,6 +23,9 @@
     "@reduxjs/toolkit": "^2.8.2",
     "axios": "^1.11.0",
     "expo": "~53.0.20",
+    "expo-build-properties": "~0.14.8",
+    "expo-image-picker": "~16.1.4",
+    "expo-location": "~18.1.6",
     "expo-notifications": "~0.31.4",
     "expo-speech": "~13.1.7",
     "expo-splash-screen": "~0.30.10",

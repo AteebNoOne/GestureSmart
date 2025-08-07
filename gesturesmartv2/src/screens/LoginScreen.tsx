@@ -10,8 +10,10 @@ import {
   SafeAreaView,
   Animated,
   Keyboard,
+  Alert,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useDispatch, useSelector } from 'react-redux';
 import { typography } from '../constants/theme';
 import { useTheme } from '../hooks/useTheme';
 import { NavigationProp } from '@react-navigation/native';
@@ -22,21 +24,36 @@ import {
   responsiveWidth,
   responsiveFontSize,
 } from 'react-native-responsive-dimensions';
+import { clearError, loginUser } from '../store/reducers';
 
 interface LoginScreenProps {
   navigation: NavigationProp<any>;
 }
 
+// Define the shape of your Redux state - adjust according to your actual state structure
+interface RootState {
+  user: {
+    isLoading: boolean;
+    error: string | null;
+    isAuthenticated: boolean;
+    user: any;
+  };
+}
+
 export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [errors, setErrors] = useState({
+  const [formErrors, setFormErrors] = useState({
     email: "",
     password: ""
   });
   const [isKeyboardVisible, setKeyboardVisible] = useState(false);
   const { theme, colors } = useTheme();
   const [animatedValue] = useState(new Animated.Value(0));
+
+  // Redux hooks
+  const dispatch = useDispatch();
+  const { isLoading, error, isAuthenticated } = useSelector((state: RootState) => state.user);
 
   // Determine if using dark theme variant
   const isDarkTheme = theme === 'dark' || theme === 'blue' || theme === 'purple';
@@ -59,6 +76,38 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     ).start();
   }, []);
 
+  // Handle authentication success
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigation.navigate('MainApp');
+    }
+  }, [isAuthenticated, navigation]);
+
+  // Handle Redux errors
+  useEffect(() => {
+    if (error) {
+      Alert.alert(
+        'Login Error',
+        error,
+        [
+          {
+            text: 'OK',
+            onPress: () => dispatch(clearError()),
+          },
+        ]
+      );
+    }
+  }, [error, dispatch]);
+
+  // Clear Redux errors when component unmounts
+  useEffect(() => {
+    return () => {
+      if (error) {
+        dispatch(clearError());
+      }
+    };
+  }, [dispatch, error]);
+
   const gestureTranslateY = animatedValue.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -8]
@@ -69,29 +118,64 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     outputRange: [0.4, 1]
   });
 
+  // Form validation
+  const validateForm = () => {
+    const errors = { email: "", password: "" };
+    let isValid = true;
 
+    // Email validation
+    if (!email.trim()) {
+      errors.email = "Email is required";
+      isValid = false;
+    } else if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+      errors.email = "Please enter a valid email address";
+      isValid = false;
+    }
+
+    // Password validation
+    if (!password.trim()) {
+      errors.password = "Password is required";
+      isValid = false;
+    } else if (password.length < 6) {
+      errors.password = "Password must be at least 6 characters";
+      isValid = false;
+    }
+
+    setFormErrors(errors);
+    return isValid;
+  };
 
   const handleLogin = async () => {
-    setErrors({
+    // Clear previous form errors
+    setFormErrors({
       email: "",
       password: ""
     });
-    navigation.navigate('MainApp');
-    // try {
-    //   if (email === "ateebnoone" && password === "123123") {
-    //     navigation.navigate('MainApp');
-    //   } else {
-    //     setErrors(prev => ({
-    //       ...prev,
-    //       password: "Invalid email or password"
-    //     }));
-    //   }
-    // } catch (error) {
-    //   setErrors(prev => ({
-    //     ...prev,
-    //     password: "Invalid email or password"
-    //   }));
-    // }
+
+    // Validate form
+    if (!validateForm()) {
+      return;
+    }
+
+    // Dispatch Redux login action
+    try {
+      const result = await dispatch(loginUser({
+        email: email.trim(),
+        password: password
+      }));
+
+      // Check if login was successful
+      if (loginUser.fulfilled.match(result)) {
+        // Navigation will be handled by the useEffect above when isAuthenticated changes
+        console.log('Login successful');
+      } else if (loginUser.rejected.match(result)) {
+        // Error will be handled by the useEffect above
+        console.log('Login failed:', result.payload);
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    }
   };
 
   const handleDetectWithoutLogin = () => {
@@ -229,6 +313,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     },
     loginButton: {
       backgroundColor: colors.primary,
+      opacity: isLoading ? 0.7 : 1,
     },
     detectButton: {
       backgroundColor: 'transparent',
@@ -287,7 +372,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     }
   });
 
-  // At the top of your component, add keyboard listeners
+  // Keyboard listeners
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
       'keyboardDidShow',
@@ -302,7 +387,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       }
     );
 
-    // Clean up listeners when component unmounts
     return () => {
       keyboardDidShowListener.remove();
       keyboardDidHideListener.remove();
@@ -335,7 +419,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
               resizeMode="contain"
             />
           </View>
-
 
           {/* Accessibility Options Icons */}
           <View style={styles.accessibilityOptionsContainer}>
@@ -370,11 +453,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
               placeholder="Enter your email"
               value={email}
               onChangeText={setEmail}
-              error={errors.email}
+              error={formErrors.email}
               leftIcon="email"
               required
               variant="filled"
               autoCapitalize="none"
+              editable={!isLoading}
             />
           </View>
 
@@ -385,11 +469,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
               placeholder="Enter your password"
               value={password}
               onChangeText={setPassword}
-              error={errors.password}
+              error={formErrors.password}
               leftIcon="lock"
               required
               variant="filled"
               autoCapitalize="none"
+              editable={!isLoading}
             />
           </View>
         </View>
@@ -399,25 +484,51 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           <TouchableOpacity
             style={[styles.button, styles.loginButton]}
             onPress={handleLogin}
+            disabled={isLoading}
           >
-            <MaterialCommunityIcons
-              name="login"
-              size={Math.round(responsiveFontSize(2.2))}
-              color="#FFFFFF"
-            />
-            <Text style={styles.buttonText}>Sign In</Text>
+            {isLoading ? (
+              <MaterialCommunityIcons
+                name="loading"
+                size={Math.round(responsiveFontSize(2.2))}
+                color="#FFFFFF"
+              />
+            ) : (
+              <MaterialCommunityIcons
+                name="login"
+                size={Math.round(responsiveFontSize(2.2))}
+                color="#FFFFFF"
+              />
+            )}
+            <Text style={styles.buttonText}>
+              {isLoading ? 'Signing In...' : 'Sign In'}
+            </Text>
           </TouchableOpacity>
 
           <View style={styles.signupContainer}>
             <Text style={styles.signupText}>Don't have an account?</Text>
-            <TouchableOpacity onPress={() => navigation.navigate("Signup")}>
+            <TouchableOpacity
+              onPress={() => navigation.navigate("Signup")}
+              disabled={isLoading}
+            >
               <Text style={styles.signupLink}>Sign Up</Text>
             </TouchableOpacity>
           </View>
 
+          <View style={styles.signupContainer}>
+            <Text style={styles.signupText}>Forgot password?</Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate("Forgot")}
+              disabled={isLoading}
+            >
+              <Text style={styles.signupLink}>Forgot</Text>
+            </TouchableOpacity>
+          </View>
+
+
           <TouchableOpacity
             style={[styles.button, styles.detectButton]}
             onPress={handleDetectWithoutLogin}
+            disabled={isLoading}
           >
             <MaterialCommunityIcons
               name="gesture-tap"

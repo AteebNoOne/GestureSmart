@@ -9,21 +9,32 @@ import {
   Animated,
   Platform,
   Alert,
+  Image
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useDispatch, useSelector } from 'react-redux';
 import { typography } from '../constants/theme';
 import { useTheme } from '../hooks/useTheme';
-import { NavigationProp } from '@react-navigation/native';
 import {
   responsiveHeight,
   responsiveWidth,
   responsiveFontSize,
 } from 'react-native-responsive-dimensions';
 import { User } from '../types/User';
-import { defaultUser } from '../constants/defaultUser';
 import { DrawerContentComponentProps } from '@react-navigation/drawer';
+import { clearError, logoutUser } from '../store/reducers';
 
 export type MenuScreenProps = DrawerContentComponentProps;
+
+// Define RootState interface - adjust according to your actual Redux state structure
+interface RootState {
+  user: {
+    user: User | null;
+    isLoading: boolean;
+    error: string | null;
+    isAuthenticated: boolean;
+  };
+}
 
 interface MenuItem {
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
@@ -37,9 +48,13 @@ interface MenuItem {
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
   const { theme, colors } = useTheme();
-  const [userData, setUserData] = useState<User>(defaultUser);
   const [animatedValue] = useState(new Animated.Value(0));
 
+  // Redux hooks
+  const dispatch = useDispatch();
+  const { user, isLoading, error } = useSelector((state: RootState) => state.user);
+
+  // Animation effect
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
@@ -57,6 +72,23 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
     ).start();
   }, []);
 
+  // Handle Redux errors
+  useEffect(() => {
+    if (error) {
+      Alert.alert(
+        'Error',
+        error,
+        [
+          {
+            text: 'OK',
+            onPress: () => dispatch(clearError()),
+          },
+        ]
+      );
+    }
+  }, [error, dispatch]);
+
+  // Handle logout with Redux
   const handleLogout = () => {
     Alert.alert(
       "Logout",
@@ -68,11 +100,64 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
         },
         {
           text: "Logout",
-          onPress: () => navigation.navigate('Auth'),
+          onPress: async () => {
+            try {
+              // Dispatch Redux logout action
+              const result = await dispatch(logoutUser());
+
+              if (logoutUser.fulfilled.match(result)) {
+                // Logout successful - navigation will be handled automatically by the auth flow
+                console.log('Logout successful');
+              } else if (logoutUser.rejected.match(result)) {
+                // Error will be handled by useEffect above
+                console.log('Logout failed:', result.payload);
+              }
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+          },
           style: "destructive"
         }
       ]
     );
+  };
+
+  // Get user initials for avatar
+  const getUserInitials = () => {
+    if (!user) return "U";
+
+    const firstName = user.firstName || "";
+    const lastName = user.lastName || "";
+
+    if (firstName && lastName) {
+      return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
+    } else if (firstName) {
+      return firstName.charAt(0).toUpperCase();
+    } else if (user.email) {
+      return user.email.charAt(0).toUpperCase();
+    }
+
+    return "U";
+  };
+
+  // Get user display name
+  const getUserDisplayName = () => {
+    if (!user) return "User";
+
+    const firstName = user.firstName || "";
+    const lastName = user.lastName || "";
+
+    if (firstName || lastName) {
+      return `${firstName} ${lastName}`.trim();
+    }
+
+    return "User";
+  };
+
+  // Get user email
+  const getUserEmail = () => {
+    return user?.email || "user@gesturesmart.com";
   };
 
   const getThemeColors = () => {
@@ -133,7 +218,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
       label: 'Profile',
       description: 'Manage your personal information',
       onPress: () => navigation.navigate('Profile'),
-      badge: 'New',
+      badge: user && !user.firstName ? 'Complete' : undefined,
       color: themeColors.profile
     },
     {
@@ -166,7 +251,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
     },
     {
       icon: 'logout',
-      label: 'Logout',
+      label: isLoading ? 'Logging out...' : 'Logout',
       description: 'Sign out of your account',
       onPress: handleLogout,
       type: 'danger',
@@ -192,10 +277,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
       alignItems: 'center',
       backgroundColor: colors.card,
       borderRadius: responsiveWidth(4),
-      padding: responsiveWidth(2),
+      padding: responsiveWidth(4),
       marginBottom: responsiveHeight(3),
       borderColor: colors.border,
       borderWidth: 1,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 2,
     },
     avatar: {
       width: responsiveWidth(15),
@@ -204,9 +294,11 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
       backgroundColor: themeColors.profile + '20',
       justifyContent: 'center',
       alignItems: 'center',
+      borderWidth: 2,
+      borderColor: themeColors.profile + '40',
     },
     avatarText: {
-      fontSize: responsiveFontSize(2.5),
+      fontSize: responsiveFontSize(2.2),
       color: themeColors.profile,
       fontFamily: typography.fontFamily.bold,
     },
@@ -238,9 +330,15 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
       marginBottom: responsiveHeight(2),
       borderColor: colors.border,
       borderWidth: 1,
+      shadowColor: colors.shadow,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 2,
     },
     menuItemDanger: {
       backgroundColor: themeColors.logout + '15',
+      opacity: isLoading ? 0.7 : 1,
     },
     iconContainer: {
       width: responsiveWidth(12),
@@ -281,6 +379,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
       padding: responsiveHeight(2),
       color: colors.textSecondary,
       fontSize: responsiveFontSize(1.4),
+      fontFamily: typography.fontFamily.regular,
     },
   });
 
@@ -290,16 +389,28 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
         <View style={styles.header}>
           <View style={styles.profileSection}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {userData?.firstName?.charAt(0) || "U"}
-              </Text>
+              {user?.profileImage ? (
+                <Image
+                  source={{ uri: user.profileImage }}
+                  style={{
+                    width: responsiveWidth(15),
+                    height: responsiveWidth(15),
+                    borderRadius: responsiveWidth(7.5),
+                  }}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Text style={styles.avatarText}>
+                  {getUserInitials()}
+                </Text>
+              )}
             </View>
             <View style={styles.profileInfo}>
               <Text style={styles.name}>
-                {userData?.firstName || "User"} {userData?.lastName || "Lastname"}
+                {getUserDisplayName()}
               </Text>
               <Text style={styles.email}>
-                {userData?.email || "user@gesturesmart.com"}
+                {getUserEmail()}
               </Text>
             </View>
           </View>
@@ -321,18 +432,30 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({ navigation }) => {
                   { transform: [{ translateY }] }
                 ]}
               >
-                <TouchableOpacity onPress={item.onPress}>
+                <TouchableOpacity
+                  onPress={item.onPress}
+                  disabled={item.type === 'danger' && isLoading}
+                  activeOpacity={0.7}
+                >
                   <View
                     style={[
                       styles.iconContainer,
                       { backgroundColor: item.color + '20' }
                     ]}
                   >
-                    <MaterialCommunityIcons
-                      name={item.icon}
-                      size={Math.round(responsiveFontSize(3))}
-                      color={item.color}
-                    />
+                    {item.type === 'danger' && isLoading ? (
+                      <MaterialCommunityIcons
+                        name="loading"
+                        size={Math.round(responsiveFontSize(3))}
+                        color={item.color}
+                      />
+                    ) : (
+                      <MaterialCommunityIcons
+                        name={item.icon}
+                        size={Math.round(responsiveFontSize(3))}
+                        color={item.color}
+                      />
+                    )}
                   </View>
                   <Text style={[
                     styles.menuLabel,

@@ -8,7 +8,6 @@ import android.graphics.Path;
 import android.os.Build;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
-import android.util.Log;
 import android.view.WindowManager;
 
 import android.content.pm.ApplicationInfo;
@@ -24,6 +23,30 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+
+import android.graphics.Bitmap;
+import android.graphics.PixelFormat;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.Image;
+import android.media.ImageReader;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+
+// ADD these class variables with your other instance variables:
+
+
+
 public class GestureActions extends ReactContextBaseJavaModule {
     private static final String TAG = "GestureActions";
     private final ReactApplicationContext reactContext;
@@ -31,6 +54,12 @@ public class GestureActions extends ReactContextBaseJavaModule {
     private CursorOverlay cursorOverlay;
     private boolean isCursorActive = false;
     private Map<String, String> appCache; // Cache for app names → package names
+    
+    private MediaProjectionManager mediaProjectionManager;
+private MediaProjection mediaProjection;
+private ImageReader imageReader;
+private VirtualDisplay virtualDisplay;
+private int screenWidth, screenHeight, screenDensity;
 
     public GestureActions(ReactApplicationContext context) {
         super(context);
@@ -38,6 +67,7 @@ public class GestureActions extends ReactContextBaseJavaModule {
         this.cursorOverlay = new CursorOverlay(context);
         this.appCache = new HashMap<>();
         initializeAppCache();
+        initializeScreenshot();
         GestureModule.GestureActionsHolder.setInstance(this);
     }
 
@@ -991,6 +1021,110 @@ public class GestureActions extends ReactContextBaseJavaModule {
             promise.reject("LAUNCH_ERROR", "Failed to launch app: " + e.getMessage());
         }
     }
+
+private void initializeScreenshot() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        mediaProjectionManager = (MediaProjectionManager) reactContext
+                .getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        
+        WindowManager windowManager = (WindowManager) reactContext
+                .getSystemService(Context.WINDOW_SERVICE);
+        android.view.Display display = windowManager.getDefaultDisplay();
+        DisplayMetrics metrics = new DisplayMetrics();
+        display.getRealMetrics(metrics);
+        
+        screenWidth = metrics.widthPixels;
+        screenHeight = metrics.heightPixels;
+        screenDensity = metrics.densityDpi;
+    }
+}
+
+// ADD this method with your other @ReactMethod methods:
+@ReactMethod
+public void takeSystemScreenshot(Promise promise) {
+    try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+ - Use AccessibilityService.takeScreenshot()
+            takeScreenshotWithAccessibilityService(promise);
+        } else {
+            promise.reject("UNSUPPORTED", "Screenshot requires Android 11 or higher for background operation");
+        }
+    } catch (Exception e) {
+        Log.e(TAG, "Failed to take screenshot", e);
+        promise.reject("ERROR", "Failed to take screenshot: " + e.getMessage());
+    }
+}
+
+// ADD this method (Android 11+ screenshot method):
+@RequiresApi(api = Build.VERSION_CODES.R)
+private void takeScreenshotWithAccessibilityService(Promise promise) {
+    AccessibilityService accessibilityService = getAccessibilityService();
+    
+    if (accessibilityService == null) {
+        promise.reject("NO_SERVICE", "AccessibilityService not available");
+        return;
+    }
+
+    accessibilityService.takeScreenshot(
+        android.view.Display.DEFAULT_DISPLAY,
+        reactContext.getMainExecutor(),
+        new AccessibilityService.TakeScreenshotCallback() {
+            @Override
+            public void onSuccess(@NonNull AccessibilityService.ScreenshotResult screenshotResult) {
+                try {
+                    Bitmap bitmap = Bitmap.wrapHardwareBuffer(
+                        screenshotResult.getHardwareBuffer(),
+                        screenshotResult.getColorSpace()
+                    );
+                    
+                    String filePath = saveScreenshotToFile(bitmap);
+                    
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("success", true);
+                    result.put("uri", filePath);
+                    promise.resolve(result);
+                    
+                    Log.i(TAG, "Screenshot saved successfully: " + filePath);
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to save screenshot", e);
+                    promise.reject("SAVE_ERROR", "Failed to save screenshot: " + e.getMessage());
+                }
+            }
+
+            @Override
+            public void onFailure(int errorCode) {
+                Log.e(TAG, "Screenshot failed with error code: " + errorCode);
+                promise.reject("SCREENSHOT_FAILED", "Screenshot failed with error code: " + errorCode);
+            }
+        }
+    );
+}
+
+// ADD this helper method:
+private String saveScreenshotToFile(Bitmap bitmap) throws IOException {
+    File picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+    File screenshotDir = new File(picturesDir, "Screenshots");
+    
+    if (!screenshotDir.exists()) {
+        screenshotDir.mkdirs();
+    }
+    
+    String fileName = "screenshot_" + System.currentTimeMillis() + ".png";
+    File file = new File(screenshotDir, fileName);
+    
+    FileOutputStream outputStream = new FileOutputStream(file);
+    bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
+    outputStream.flush();
+    outputStream.close();
+    
+    // Notify media scanner
+    Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+    mediaScanIntent.setData(android.net.Uri.fromFile(file));
+    reactContext.sendBroadcast(mediaScanIntent);
+    
+    return file.getAbsolutePath();
+}
 
     private boolean checkAccessibilityPermission() {
         String service = reactContext.getPackageName() + "/com.ateebnoone.gesturesmartv2.GestureAccessibilityService";

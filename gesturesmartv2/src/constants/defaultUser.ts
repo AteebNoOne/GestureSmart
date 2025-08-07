@@ -1,10 +1,14 @@
-export const defaultUser = {
+import { User } from "../types/User";
+
+export const defaultUser: User = {
+    _id: "",
     firstName: "",
     lastName: "",
+    profileImage: '',
     email: "",
+    gender: 'male',
     dateOfBirth: "",
-    age: "",
+    age: 0,
     phone: "",
-    location: "",
-    createdAt: ""
+    location: ""
 }

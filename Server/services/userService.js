@@ -162,11 +162,17 @@ class UserService {
     }
 
     async validateEmail(email) {
-        const user = await User.findOne({ email }); // findOne instead of find
-        if (user) {
-            throw new AppError("Email Already Exist", 400);
+        try {
+            const user = await User.findOne({ email }); // findOne instead of find
+            if (user) {
+                return false;
+            }
+            return true;
         }
-        return true; // Indicate email is available
+        catch (error) {
+            throw new AppError("Internal Server Error", 500);
+        }
+
     }
 
 }

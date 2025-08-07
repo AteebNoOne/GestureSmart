@@ -1,5 +1,5 @@
-import React from 'react';
-import { StatusBar } from "react-native";
+import React, { useEffect } from 'react';
+import { StatusBar, View, Image, StyleSheet } from "react-native";
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator, DrawerContentComponentProps } from '@react-navigation/drawer';
@@ -23,6 +23,11 @@ import { HomeScreen } from '../screens/HomeScreen';
 import VoiceService from '../screens/VoiceServiceScreen';
 import EyeTracking from '../screens/EyeTracking';
 import GestureDetection from '../screens/GestureDetection';
+import { Provider, useDispatch, useSelector } from 'react-redux';
+import { AppDispatch, RootState, store } from '../store';
+import { initializeAuth } from '../store/reducers';
+import LineLoader from '../components/LineLoader';
+import { ForgotPasswordScreen } from '../screens/ForgotPassword';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -35,6 +40,7 @@ const AuthNavigator = () => (
     <AuthStack.Screen name="Login" component={LoginScreen} />
     <AuthStack.Screen name="Signup" component={SignupScreen} />
     <AuthStack.Screen name="Detection" component={GestureDetection} />
+    <AuthStack.Screen name="Forgot" component={ForgotPasswordScreen} />
   </AuthStack.Navigator>
 );
 
@@ -113,21 +119,73 @@ export default function Navigation() {
   const statusBarHeight = StatusBar.currentHeight || 0;
 
   return (
-    <SafeAreaProvider style={{ marginTop: statusBarHeight }}>
-      <ExpoStatusBar backgroundColor='transparent' />
-      <ThemeProvider initialTheme={theme}>
-        <NavigationContainer>
-          <Stack.Navigator
-            initialRouteName="Auth"
-            screenOptions={{
-              headerShown: false,
-            }}
-          >
-            <Stack.Screen name="Auth" component={AuthNavigator} />
-            <Stack.Screen name="MainApp" component={DrawerNavigator} />
-          </Stack.Navigator>
-        </NavigationContainer>
-      </ThemeProvider>
-    </SafeAreaProvider>
+    <Provider store={store}>
+      <SafeAreaProvider style={{ marginTop: statusBarHeight }}>
+        <ExpoStatusBar backgroundColor='transparent' />
+        <ThemeProvider initialTheme={theme}>
+          <NavigationContainer>
+            <AppNavigator />
+          </NavigationContainer>
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </Provider>
   );
 }
+
+
+const AppNavigator = () => {
+  const dispatch = useDispatch<AppDispatch>();
+  const { isAuthenticated, isInitialized } = useSelector((state: RootState) => state.user);
+
+  useEffect(() => {
+    dispatch(initializeAuth());
+  }, [dispatch]);
+
+  // Show loading screen while initializing
+  if (!isInitialized) {
+    return (
+      <View style={styles.splashContainer}>
+        <Image
+          source={require('../../assets/splash-icon.png')}
+
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        <LineLoader />
+      </View>
+    );
+  }
+
+  return (
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+    >
+      {isAuthenticated ? (
+        <Stack.Screen name="MainApp" component={DrawerNavigator} />
+      ) : (
+        <Stack.Screen name="Auth" component={AuthNavigator} />
+      )}
+    </Stack.Navigator>
+  );
+};
+
+
+const styles = StyleSheet.create({
+  splashContainer: {
+    flex: 1,
+    backgroundColor: '#fff', // or any brand color
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  logo: {
+    width: 350,
+    height: 350,
+    marginBottom: 20,
+  },
+  loader: {
+    marginTop: 10,
+  },
+});

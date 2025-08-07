@@ -49,6 +49,18 @@ const userSchema = new Schema({
         type: String,
         required: [true, "Location is required!"],
     },
+    otp: {
+        type: String,
+        default: undefined
+    },
+    otpExpire: {
+        type: Date,
+        default: undefined
+    },
+    otpType: {
+        type: String,
+        default: undefined
+    },
     createdAt: {
         type: Date,
         default: Date.now,

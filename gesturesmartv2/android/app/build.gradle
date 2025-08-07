@@ -4,7 +4,6 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
-
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -94,7 +93,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "1.0.0"
+        versionName "1.2.0"
     }
     signingConfigs {
         debug {
@@ -152,19 +151,6 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
-    // implementation 'com.google.mediapipe:solution-core:0.10.20'
-    // implementation 'com.google.mediapipe:hands:0.10.20'
-    // implementation 'com.google.mediapipe:facemesh:0.10.8'
-
-    // implementation 'com.google.mediapipe:solution-core:latest.release'
-    // implementation 'com.google.mediapipe:tasks-vision:latest.release'
-    implementation 'com.google.mediapipe:tasks-vision:0.10.26.1'
-
-
-    implementation 'com.google.mlkit:face-detection:16.1.7'
-    // implementation 'com.google.mlkit:face-mesh-detection:16.0.0-beta3'
-
-    
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
     def isWebpAnimatedEnabled = (findProperty('expo.webp.animated') ?: "") == "true";
@@ -188,4 +174,6 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    implementation 'com.google.mediapipe:tasks-vision:0.10.26.1'
 }
