@@ -16,23 +16,18 @@ Explore the GestureSmart interface and features through our comprehensive screen
 ![Screenshot 1](Screenshots/IMG-20250806-WA0012.jpg) | ![Screenshot 2](Screenshots/IMG-20250806-WA0013.jpg) | ![Screenshot 3](Screenshots/IMG-20250806-WA0014.jpg) | ![Screenshot 4](Screenshots/IMG-20250806-WA0015.jpg)
 :---:|:---:|:---:|:---:
 
-### Gesture Control Features
 ![Screenshot 5](Screenshots/IMG-20250806-WA0016.jpg) | ![Screenshot 6](Screenshots/IMG-20250806-WA0017.jpg) | ![Screenshot 7](Screenshots/IMG-20250806-WA0018.jpg) | ![Screenshot 8](Screenshots/IMG-20250806-WA0019.jpg)
 :---:|:---:|:---:|:---:
 
-### Voice Commands & Eye Tracking
 ![Screenshot 9](Screenshots/IMG-20250806-WA0020.jpg) | ![Screenshot 10](Screenshots/IMG-20250806-WA0021.jpg) | ![Screenshot 11](Screenshots/IMG-20250806-WA0022.jpg) | ![Screenshot 12](Screenshots/IMG-20250806-WA0023.jpg)
 :---:|:---:|:---:|:---:
 
-### Settings & Accessibility Features
 ![Screenshot 13](Screenshots/IMG-20250806-WA0024.jpg) | ![Screenshot 14](Screenshots/IMG-20250806-WA0025.jpg) | ![Screenshot 15](Screenshots/IMG-20250806-WA0026.jpg) | ![Screenshot 16](Screenshots/IMG-20250806-WA0027.jpg)
 :---:|:---:|:---:|:---:
 
-### Additional Features
 ![Screenshot 17](Screenshots/IMG-20250806-WA0028.jpg) | ![Screenshot 18](Screenshots/IMG-20250806-WA0029.jpg) | ![Screenshot 19](Screenshots/IMG-20250806-WA0030.jpg) | ![Screenshot 20](Screenshots/IMG-20250806-WA0031.jpg)
 :---:|:---:|:---:|:---:
 
-### User Experience
 ![Screenshot 21](Screenshots/IMG-20250806-WA0032.jpg)
 :---:
 
