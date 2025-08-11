@@ -81,7 +81,7 @@ The system demonstrates high reliability across key performance indicators:
    ## 🔧 System Architecture
 
 ### High-Level Architecturebash
-   git clone https://github.com/your-username/gesturesmart.git
+   git clone https://github.com/ateebnoone/gesturesmart.git
    cd gesturesmart
    ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -127,13 +127,7 @@ The system demonstrates high reliability across key performance indicators:
    ```
 
 3. **Environment Configuration**
-   Create a `.env` file in the root directory:
-   ```env
-   ASSEMBLYAI_API_KEY=your_assemblyai_api_key
-   MONGODB_URI=your_mongodb_atlas_connection_string
-   NODE_ENV=development
-   EXPO_PROJECT_ID=your_expo_project_id
-   ```
+   Add your api key in src\constants\api_keys.ts 
 
 4. **Prebuild with custom native code**
    ```bash
@@ -153,11 +147,6 @@ The system demonstrates high reliability across key performance indicators:
    # For Android
    yarn android
    
-   # For iOS
-   yarn ios
-   
-   # For web (limited functionality)
-   yarn web
    ```
 
 ### 🏗️ Building for Production
@@ -167,8 +156,6 @@ The system demonstrates high reliability across key performance indicators:
 # Build for Android
 yarn buildCloud
 
-# Build for iOS (requires Apple Developer account)
-eas build -p ios --profile preview
 ```
 
 ## 🧠 AI Model Training
