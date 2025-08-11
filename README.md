@@ -82,7 +82,7 @@ The system demonstrates high reliability across key performance indicators:
 
 ### High-Level Architecturebash
    git clone https://github.com/ateebnoone/gesturesmart.git
-   cd gesturesmart
+   cd gesturesmartv2
    ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Expo/RN App   │    │     Node.js     │    │  MongoDB Atlas  │
