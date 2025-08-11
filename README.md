@@ -6,13 +6,45 @@ An AI-powered mobile accessibility system designed for users with motor and visu
 
 GestureSmart bridges the accessibility gap in mobile interfaces by offering an inclusive and adaptive system that enables users to control mobile devices through gestures, voice, or eye movements. This combination of AI technologies ensures usability across diverse environments and offers users the freedom to choose their preferred interaction mode.
 
+## 📸 App Screenshots
+
+Explore the GestureSmart interface and features through our comprehensive screenshot gallery:
+
+<div align="center">
+
+### Main Interface & Navigation
+![Screenshot 1](Screenshots/IMG-20250806-WA0012.jpg) | ![Screenshot 2](Screenshots/IMG-20250806-WA0013.jpg) | ![Screenshot 3](Screenshots/IMG-20250806-WA0014.jpg) | ![Screenshot 4](Screenshots/IMG-20250806-WA0015.jpg)
+:---:|:---:|:---:|:---:
+
+### Gesture Control Features
+![Screenshot 5](Screenshots/IMG-20250806-WA0016.jpg) | ![Screenshot 6](Screenshots/IMG-20250806-WA0017.jpg) | ![Screenshot 7](Screenshots/IMG-20250806-WA0018.jpg) | ![Screenshot 8](Screenshots/IMG-20250806-WA0019.jpg)
+:---:|:---:|:---:|:---:
+
+### Voice Commands & Eye Tracking
+![Screenshot 9](Screenshots/IMG-20250806-WA0020.jpg) | ![Screenshot 10](Screenshots/IMG-20250806-WA0021.jpg) | ![Screenshot 11](Screenshots/IMG-20250806-WA0022.jpg) | ![Screenshot 12](Screenshots/IMG-20250806-WA0023.jpg)
+:---:|:---:|:---:|:---:
+
+### Settings & Accessibility Features
+![Screenshot 13](Screenshots/IMG-20250806-WA0024.jpg) | ![Screenshot 14](Screenshots/IMG-20250806-WA0025.jpg) | ![Screenshot 15](Screenshots/IMG-20250806-WA0026.jpg) | ![Screenshot 16](Screenshots/IMG-20250806-WA0027.jpg)
+:---:|:---:|:---:|:---:
+
+### Additional Features
+![Screenshot 17](Screenshots/IMG-20250806-WA0028.jpg) | ![Screenshot 18](Screenshots/IMG-20250806-WA0029.jpg) | ![Screenshot 19](Screenshots/IMG-20250806-WA0030.jpg) | ![Screenshot 20](Screenshots/IMG-20250806-WA0031.jpg)
+:---:|:---:|:---:|:---:
+
+### User Experience
+![Screenshot 21](Screenshots/IMG-20250806-WA0032.jpg)
+:---:
+
+</div>
+
 ## ✨ Key Features
 
 ### 🎯 Multi-Modal Control
-- **Gesture Control**: Hand-based navigation using MediaPipe Gestures and HandPose
-- **Voice Commands**: Real-time speech input via AssemblyAI API
-- **Eye Tracking**: MediaPipe FaceMesh-based gaze and blink detection for UI control
-- **Seamless Mode Switching**: Intelligent fallback mechanisms between input modes
+- **Gesture Control** Hand-based navigation using MediaPipe Gestures and HandPose
+- **Voice Commands** Real-time speech input via AssemblyAI API
+- **Eye Tracking** MediaPipe FaceMesh-based gaze and blink detection for UI control
+- **Seamless Mode Switching** Intelligent fallback mechanisms between input modes
 
 ### 🔒 Privacy-Focused Design
 - No personal data collection - only anonymized device tokens and session logs
@@ -51,18 +83,67 @@ GestureSmart bridges the accessibility gap in mobile interfaces by offering an i
 - **MediaPipe Gestures** - Real-time gesture recognition
 - **MediaPipe HandPose** - Hand landmark detection
 - **MediaPipe FaceMesh** - Eye tracking and facial analysis
+- **Google ML Kit Face Detection** - Enhanced face tracking capabilities
 - **Custom Java Native Modules** - Optimized ML processing
 - **TensorFlow Lite** - On-device machine learning
+- **AssemblyAI** - Voice recognition and speech-to-text
+
+## 🤖 AI Models & APIs Documentation
+
+### Hand Gesture Recognition
+**MediaPipe Hand Landmarker & Gesture Recognizer**
+- **Implementation**: `com.google.mediapipe:tasks-vision:0.10.26.1`
+- **Hand Landmarker**: [Google AI Documentation](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker)
+- **Gesture Recognizer**: [Google AI Documentation](https://ai.google.dev/edge/mediapipe/solutions/vision/gesture_recognizer)
+- **Model Card**: [Hand Gesture Classification with Fairness](https://storage.googleapis.com/mediapipe-assets/gesture_recognizer/model_card_hand_gesture_classification_with_faireness_2022.pdf)
+- **Hand Tracking Model**: [Hand Tracking (Lite/Full) with Fairness](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Hand%20Tracking%20%28Lite_Full%29%20with%20Fairness%20Oct%202021.pdf)
+
+### Eye Tracking & Face Detection
+**Google ML Kit Face Detection**
+- **Documentation**: [ML Kit Vision Face Detection](https://developers.google.com/ml-kit/vision/face-detection)
+- **Features**: Real-time face mesh analysis, eye gaze tracking, blink detection
+- **Privacy**: On-device processing with no data transmission
+
+### Voice Recognition
+**AssemblyAI Speech-to-Text**
+- **Service**: [AssemblyAI Platform](https://www.assemblyai.com/)
+- **Features**: Real-time transcription, noise filtering, multi-language support
+- **Usage**: Voice command processing and accessibility features
+
+## ⚙️ Server Configuration
+
+### Environment Variables
+```env
+PORT=8000
+MONGO_URI=your_mongodb_connection_string
+TOKEN_KEY=your_jwt_secret_key
+APP_NAME=Gesture Smart Server
+EmailHost=smtp.gmail.com
+EmailPort=587
+EmailSecured=false
+EmailUser=your_email_address
+EmailPass=your_email_password
+CLOUD_NAME=your_cloudinary_cloud_name
+CLOUDINARY_KEY=your_cloudinary_api_key
+CLOUDINARY_SECRET=your_cloudinary_api_secret
+ENVIRONMENT=DEV
+```
+
+### Required API Keys
+1. **MongoDB Atlas** - Database connection
+2. **AssemblyAI** - Voice recognition ([Get API Key](https://www.assemblyai.com/))
+3. **Cloudinary** - Image/media storage
+4. **Email Service** - Notification system
 
 ## 📊 Performance Metrics
 
 The system demonstrates high reliability across key performance indicators:
 
-- **Precision**: High accuracy in controlled environments
-- **Accuracy**: Consistent performance across different input modes
-- **Recall**: Effective detection of user intents
-- **TNR (True Negative Rate)**: Robust false positive filtering
-- **Fallback Reliability**: Seamless mode switching preserves usability
+- **Precision** High accuracy in controlled environments
+- **Accuracy** Consistent performance across different input modes
+- **Recall** Effective detection of user intents
+- **TNR (True Negative Rate)** Robust false positive filtering
+- **Fallback Reliability** Seamless mode switching preserves usability
 
 ## 🚀 Getting Started
 
@@ -78,12 +159,53 @@ The system demonstrates high reliability across key performance indicators:
 ### Installation
 
 1. **Clone the repository**
-   ## 🔧 System Architecture
-
-### High-Level Architecturebash
+   ```bash
    git clone https://github.com/ateebnoone/gesturesmart.git
-   cd gesturesmartv2
+   cd MobileApp
    ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   # or
+   yarn install
+   ```
+
+3. **Environment Configuration**
+   - Add your API keys in `src/constants/api_keys.ts`
+   - Configure server environment variables as shown above
+
+4. **Prebuild with custom native code**
+   ```bash
+   yarn prebuild
+   # This will backup native code, run expo prebuild, and restore custom native modules
+   ```
+
+5. **Start the development server**
+   ```bash
+   yarn start
+   # or
+   npx expo start
+   ```
+
+6. **Run on device/simulator**
+   ```bash
+   # For Android
+   yarn android
+   ```
+
+### 🏗️ Building for Production
+
+**Using EAS Build (Recommended)**
+```bash
+# Build for Android
+yarn buildCloud
+```
+
+## 🔧 System Architecture
+
+### High-Level Architecture
+```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Expo/RN App   │    │     Node.js     │    │  MongoDB Atlas  │
 │  (TypeScript)   │◄──►│     Backend     │◄──►│    Database     │
@@ -98,8 +220,10 @@ The system demonstrates high reliability across key performance indicators:
 │ • MP FaceMesh   │    │ • Expo Services │
 │ • Custom Java   │    │ • Push Notifs   │
 └─────────────────┘    └─────────────────┘
+```
 
 ### Component Architecture
+```
 ┌─────────────────────────────────────────────────────────┐
 │                    React Native App                     │
 ├─────────────────────────────────────────────────────────┤
@@ -119,66 +243,27 @@ The system demonstrates high reliability across key performance indicators:
 └─────────────────────────────────────────────────────────┘
 ```
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   # or
-   yarn install
-   ```
-
-3. **Environment Configuration**
-   Add your api key in src\constants\api_keys.ts 
-
-4. **Prebuild with custom native code**
-   ```bash
-   yarn prebuild
-   # This will backup native code, run expo prebuild, and restore custom native modules
-   ```
-
-5. **Start the development server**
-   ```bash
-   yarn start
-   # or
-   npx expo start
-   ```
-
-6. **Run on device/simulator**
-   ```bash
-   # For Android
-   yarn android
-   
-   ```
-
-### 🏗️ Building for Production
-
-**Using EAS Build (Recommended)**
-```bash
-# Build for Android
-yarn buildCloud
-
-```
-
 ## 🧠 AI Model Training
 
 ### Datasets Used
-- **Gesture Recognition**: Annotated video frames of hand movements for swipes, taps, and zoom actions using MediaPipe HandPose landmarks
-- **Voice Commands**: Pre-recorded datasets with varying accents and environmental conditions processed through AssemblyAI
-- **Eye Tracking**: Facial landmark datasets for gaze direction and blinking pattern detection using MediaPipe FaceMesh
+- **Gesture Recognition** Annotated video frames of hand movements for swipes, taps, and zoom actions using MediaPipe HandPose landmarks
+- **Voice Commands** Pre-recorded datasets with varying accents and environmental conditions processed through AssemblyAI
+- **Eye Tracking** Facial landmark datasets for gaze direction and blinking pattern detection using MediaPipe FaceMesh
 
 ### Model Architecture
-- **Preprocessing**: Data normalization and augmentation
-- **Framework**: MediaPipe Gestures, HandPose, and FaceMesh with deep learning integration
-- **Training Metrics**: Accuracy, Precision, Recall, and F1-Score optimization
+- **Preprocessing** Data normalization and augmentation
+- **Framework** MediaPipe Gestures, HandPose, and FaceMesh with deep learning integration
+- **Training Metrics** Accuracy, Precision, Recall, and F1-Score optimization
 
 ## 🏗️ Architecture & Custom Implementation
 
 ### Expo Prebuild Integration
 GestureSmart utilizes Expo's managed workflow with custom native code integration:
 
-- **Expo SDK 53**: Latest managed workflow benefits
-- **Custom Java Modules**: Performance-critical ML processing
-- **Automated Build Scripts**: Backup/restore native code during prebuild
-- **EAS Build**: Cloud-based compilation for production builds
+- **Expo SDK 53** Latest managed workflow benefits
+- **Custom Java Modules** Performance-critical ML processing
+- **Automated Build Scripts** Backup/restore native code during prebuild
+- **EAS Build** Cloud-based compilation for production builds
 
 ### Native Code Integration
 ```bash
@@ -189,26 +274,10 @@ yarn prebuild        # Full prebuild with native code preservation
 ```
 
 ### State Management Architecture
-- **Redux Toolkit**: Centralized state management
-- **Async Storage**: Persistent local data storage
-- **React Navigation**: Multi-screen navigation with drawer
-- **Background Actions**: Continuous gesture recognition
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   React Native  │    │     Node.js     │    │  MongoDB Atlas  │
-│   Mobile App    │◄──►│     Backend     │◄──►│    Database     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │
-         ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐
-│   AI Services   │    │  Cloud Services │
-│ • MP Gestures   │    │ • AssemblyAI    │
-│ • MP HandPose   │    │ • HTTPS Encrypt │
-│ • MP FaceMesh   │    │                 │
-│ • TensorFlow    │    │                 │
-└─────────────────┘    └─────────────────┘
-```
+- **Redux Toolkit** Centralized state management
+- **Async Storage** Persistent local data storage
+- **React Navigation** Multi-screen navigation with drawer
+- **Background Actions** Continuous gesture recognition
 
 ## 🎯 Use Cases
 
@@ -219,10 +288,10 @@ yarn prebuild        # Full prebuild with native code preservation
 - Elderly users seeking simplified interfaces
 
 ### Environments
-- **Noisy Environments**: Voice recognition with noise filtering
-- **Low-Light Conditions**: Gesture and eye-tracking alternatives
-- **Dynamic Settings**: Adaptive mode switching based on context
-- **Offline Scenarios**: Core functionality without internet dependency
+- **Noisy Environments** Voice recognition with noise filtering
+- **Low-Light Conditions** Gesture and eye-tracking alternatives
+- **Dynamic Settings** Adaptive mode switching based on context
+- **Offline Scenarios** Core functionality without internet dependency
 
 ## 🔮 Future Enhancements
 
@@ -249,10 +318,10 @@ yarn prebuild        # Full prebuild with native code preservation
 ## 🧪 Testing & Validation
 
 The system underwent extensive testing across:
-- **Controlled Environments**: Laboratory conditions with optimal lighting and minimal noise
-- **Real-World Scenarios**: Varied lighting, background noise, and user movement
-- **Accessibility Compliance**: WCAG 2.1 guidelines adherence
-- **Cross-Platform Compatibility**: iOS and Android device testing
+- **Controlled Environments** Laboratory conditions with optimal lighting and minimal noise
+- **Real-World Scenarios** Varied lighting, background noise, and user movement
+- **Accessibility Compliance** WCAG 2.1 guidelines adherence
+- **Cross-Platform Compatibility** iOS and Android device testing
 
 ## 🤝 Contributing
 
@@ -273,10 +342,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Contact & Support
 
-**Developer**: Atib Ur Rehman
+**Developer: Atib Ur Rehman**
 
-- 📧 **Email**: [ateebnoone@gmail.com](mailto:ateebnoone@gmail.com)
-- 💬 **WhatsApp**: [+923182553930](https://wa.me/+923182553930)
+- 📧 Email: [ateebnoone@gmail.com](mailto:ateebnoone@gmail.com)
+- 💬 WhatsApp: [+923182553930](https://wa.me/+923182553930)
 
 ## 🙏 Acknowledgments
 
