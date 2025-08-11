@@ -9,9 +9,9 @@ GestureSmart bridges the accessibility gap in mobile interfaces by offering an i
 ## ✨ Key Features
 
 ### 🎯 Multi-Modal Control
-- **Gesture Control**: Hand-based navigation using MediaPipe/TensorFlow Lite
-- **Voice Commands**: Real-time speech input via Google Speech-to-Text API
-- **Eye Tracking**: OpenCV-based gaze and blink detection for UI control
+- **Gesture Control**: Hand-based navigation using MediaPipe Gestures and HandPose
+- **Voice Commands**: Real-time speech input via AssemblyAI API
+- **Eye Tracking**: MediaPipe FaceMesh-based gaze and blink detection for UI control
 - **Seamless Mode Switching**: Intelligent fallback mechanisms between input modes
 
 ### 🔒 Privacy-Focused Design
@@ -32,21 +32,27 @@ GestureSmart bridges the accessibility gap in mobile interfaces by offering an i
 
 ## 🏗️ Technology Stack
 
-### Frontend
-- **React Native** - Cross-platform mobile development
-- **TensorFlow Lite** - On-device machine learning
-- **MediaPipe** - Real-time gesture recognition
-- **OpenCV** - Computer vision and eye tracking
+### Frontend & Mobile
+- **Expo SDK 53** - React Native development platform
+- **React Native 0.79.5** - Cross-platform mobile framework
+- **React 19.0.0** - Latest React version
+- **TypeScript 5.8.3** - Type-safe JavaScript development
+- **Custom Java Native Code** - Platform-specific optimizations
+- **Expo Prebuild** - Custom native code integration
 
-### Backend
+### Backend & Database
 - **Node.js** - Server-side runtime
 - **MongoDB Atlas** - Cloud database for session data
 - **Express.js** - Web application framework
+- **Redux Toolkit** - State management
+- **Async Storage** - Local data persistence
 
-### AI/ML Services
-- **Google Speech API** - Speech-to-text conversion
-- **MediaPipe Framework** - Hand landmark detection
-- **OpenCV** - Image processing and facial landmark detection
+### AI/ML & Computer Vision
+- **MediaPipe Gestures** - Real-time gesture recognition
+- **MediaPipe HandPose** - Hand landmark detection
+- **MediaPipe FaceMesh** - Eye tracking and facial analysis
+- **Custom Java Native Modules** - Optimized ML processing
+- **TensorFlow Lite** - On-device machine learning
 
 ## 📊 Performance Metrics
 
@@ -61,61 +67,145 @@ The system demonstrates high reliability across key performance indicators:
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js (v14 or higher)
-- React Native CLI
+- Node.js (v18 or higher)
+- Expo CLI (latest version)
 - Android Studio / Xcode
+- EAS CLI (for builds)
 - MongoDB Atlas account
-- Google Cloud Platform account (for Speech API)
+- AssemblyAI account
+- Java Development Kit (for custom native modules)
 
 ### Installation
 
 1. **Clone the repository**
-   ```bash
+   ## 🔧 System Architecture
+
+### High-Level Architecturebash
    git clone https://github.com/your-username/gesturesmart.git
    cd gesturesmart
    ```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Expo/RN App   │    │     Node.js     │    │  MongoDB Atlas  │
+│  (TypeScript)   │◄──►│     Backend     │◄──►│    Database     │
+│  + Custom Java  │    │   (Express.js)  │    │                 │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │
+         ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐
+│   Native Modules│    │  Cloud Services │
+│ • MP Gestures   │    │ • AssemblyAI    │
+│ • MP HandPose   │    │ • EAS Build     │
+│ • MP FaceMesh   │    │ • Expo Services │
+│ • Custom Java   │    │ • Push Notifs   │
+└─────────────────┘    └─────────────────┘
+
+### Component Architecture
+┌─────────────────────────────────────────────────────────┐
+│                    React Native App                     │
+├─────────────────────────────────────────────────────────┤
+│  Navigation Layer (React Navigation + Drawer)          │
+├─────────────────────────────────────────────────────────┤
+│  State Management (Redux Toolkit + Async Storage)      │
+├─────────────────────────────────────────────────────────┤
+│  Feature Modules                                        │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐      │
+│  │   Gesture   │ │    Voice    │ │   Eye Track │      │
+│  │  Detection  │ │  Commands   │ │   (FaceMesh)│      │
+│  └─────────────┘ └─────────────┘ └─────────────┘      │
+├─────────────────────────────────────────────────────────┤
+│  Native Bridge (Custom Java + Expo Modules)            │
+├─────────────────────────────────────────────────────────┤
+│  Platform APIs (Camera, Microphone, Sensors)           │
+└─────────────────────────────────────────────────────────┘
+```
 
 2. **Install dependencies**
    ```bash
    npm install
-   cd ios && pod install # For iOS only
+   # or
+   yarn install
    ```
 
 3. **Environment Configuration**
    Create a `.env` file in the root directory:
    ```env
-   GOOGLE_SPEECH_API_KEY=your_google_speech_api_key
+   ASSEMBLYAI_API_KEY=your_assemblyai_api_key
    MONGODB_URI=your_mongodb_atlas_connection_string
    NODE_ENV=development
+   EXPO_PROJECT_ID=your_expo_project_id
    ```
 
-4. **Start the Metro bundler**
+4. **Prebuild with custom native code**
    ```bash
-   npx react-native start
+   yarn prebuild
+   # This will backup native code, run expo prebuild, and restore custom native modules
    ```
 
-5. **Run the application**
+5. **Start the development server**
+   ```bash
+   yarn start
+   # or
+   npx expo start
+   ```
+
+6. **Run on device/simulator**
    ```bash
    # For Android
-   npx react-native run-android
+   yarn android
    
    # For iOS
-   npx react-native run-ios
+   yarn ios
+   
+   # For web (limited functionality)
+   yarn web
    ```
+
+### 🏗️ Building for Production
+
+**Using EAS Build (Recommended)**
+```bash
+# Build for Android
+yarn buildCloud
+
+# Build for iOS (requires Apple Developer account)
+eas build -p ios --profile preview
+```
 
 ## 🧠 AI Model Training
 
 ### Datasets Used
-- **Gesture Recognition**: Annotated video frames of hand movements for swipes, taps, and zoom actions
-- **Voice Commands**: Pre-recorded datasets with varying accents and environmental conditions
-- **Eye Tracking**: Facial landmark datasets for gaze direction and blinking pattern detection
+- **Gesture Recognition**: Annotated video frames of hand movements for swipes, taps, and zoom actions using MediaPipe HandPose landmarks
+- **Voice Commands**: Pre-recorded datasets with varying accents and environmental conditions processed through AssemblyAI
+- **Eye Tracking**: Facial landmark datasets for gaze direction and blinking pattern detection using MediaPipe FaceMesh
 
 ### Model Architecture
 - **Preprocessing**: Data normalization and augmentation
-- **Framework**: MediaPipe and OpenCV with deep learning integration
+- **Framework**: MediaPipe Gestures, HandPose, and FaceMesh with deep learning integration
 - **Training Metrics**: Accuracy, Precision, Recall, and F1-Score optimization
 
-## 🔧 System Architecture
+## 🏗️ Architecture & Custom Implementation
+
+### Expo Prebuild Integration
+GestureSmart utilizes Expo's managed workflow with custom native code integration:
+
+- **Expo SDK 53**: Latest managed workflow benefits
+- **Custom Java Modules**: Performance-critical ML processing
+- **Automated Build Scripts**: Backup/restore native code during prebuild
+- **EAS Build**: Cloud-based compilation for production builds
+
+### Native Code Integration
+```bash
+# Custom scripts for native code management
+yarn backup-native    # Backup custom native modules
+yarn restore-native   # Restore after prebuild
+yarn prebuild        # Full prebuild with native code preservation
+```
+
+### State Management Architecture
+- **Redux Toolkit**: Centralized state management
+- **Async Storage**: Persistent local data storage
+- **React Navigation**: Multi-screen navigation with drawer
+- **Background Actions**: Continuous gesture recognition
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -126,8 +216,9 @@ The system demonstrates high reliability across key performance indicators:
          ▼                       ▼
 ┌─────────────────┐    ┌─────────────────┐
 │   AI Services   │    │  Cloud Services │
-│ • MediaPipe     │    │ • Google Speech │
-│ • OpenCV        │    │ • HTTPS Encrypt │
+│ • MP Gestures   │    │ • AssemblyAI    │
+│ • MP HandPose   │    │ • HTTPS Encrypt │
+│ • MP FaceMesh   │    │                 │
 │ • TensorFlow    │    │                 │
 └─────────────────┘    └─────────────────┘
 ```
@@ -181,10 +272,13 @@ The system underwent extensive testing across:
 We welcome contributions to make GestureSmart more accessible and inclusive! Please read our [Contributing Guidelines](CONTRIBUTING.md) before submitting pull requests.
 
 ### Development Guidelines
-1. Follow React Native and Node.js best practices
+1. Follow Expo and React Native best practices
 2. Ensure accessibility compliance in all features
-3. Test across multiple devices and environments
-4. Document new features and API changes
+3. Test custom native modules on multiple devices
+4. Use TypeScript for type safety
+5. Maintain clean Redux state architecture
+6. Document native code integrations
+7. Test prebuild process before major releases
 
 ## 📄 License
 
