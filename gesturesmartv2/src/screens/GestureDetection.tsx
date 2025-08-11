@@ -50,7 +50,7 @@ interface AppLocalState {
     status: "initializing" | "stopped" | "running" | "background" | "error" | "camera_lost";
 }
 
-const GestureDetection: React.FC<GestureDetectionScreenProps> = () => {
+const GestureDetection: React.FC<GestureDetectionScreenProps> = ({ navigation }) => {
     // Refs
     const appState = useRef<AppStateStatus>(AppState.currentState);
     const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -132,10 +132,7 @@ const GestureDetection: React.FC<GestureDetectionScreenProps> = () => {
             label: "Four Fingers",
             imagePath: require("../assets/gestures/four_fingers.png"),
         },
-        Pinky_Up: {
-            label: "Pinky Up",
-            imagePath: require("../assets/gestures/pinky_up.png"),
-        },
+
         Index_Pinky: {
             label: "Index & Pinky",
             imagePath: require("../assets/gestures/index_pinky.png"),
@@ -180,7 +177,9 @@ const GestureDetection: React.FC<GestureDetectionScreenProps> = () => {
             setCameraPermissionDenied
         };
         await requestTrackingPermissions(handlers, 'gesture tracking');
-    }, []);    // Camera health monitoring
+    }, []);
+
+    // Camera health monitoring
     const startCameraHealthCheck = useCallback(() => {
         if (cameraHealthCheckInterval.current) {
             clearInterval(cameraHealthCheckInterval.current);
@@ -228,33 +227,66 @@ const GestureDetection: React.FC<GestureDetectionScreenProps> = () => {
         }
     }, [safeSetState]);
 
+    // Stop service function (reusable)
+    const stopServiceAndExit = useCallback(async () => {
+        try {
+            console.log('Stopping gesture tracking service before exit...');
+            if (cameraHealthCheckInterval.current) {
+                clearInterval(cameraHealthCheckInterval.current);
+                cameraHealthCheckInterval.current = null;
+            }
+
+            await GestureService.stopService();
+            safeSetState((prev) => ({
+                ...prev,
+                isRunning: false,
+                status: "stopped",
+                isBackgroundActive: false,
+            }));
+            setCurrentEvent("none");
+
+            console.log('Gesture tracking service stopped successfully');
+
+            // Navigate back after stopping the service
+            navigation.goBack();
+        } catch (error) {
+            console.error('Failed to stop service during exit:', error);
+            // Still navigate back even if stop fails
+            navigation.goBack();
+        }
+    }, [navigation, safeSetState]);
+
+    // Back handler implementation
     useEffect(() => {
         const onBackPress = () => {
-            Alert.alert(
-                "Confirm Exit",
-                "Are you sure you want to go back?",
-                [
-                    {
-                        text: "No",
-                        onPress: () => null,
-                        style: "cancel"
-                    },
-                    {
-                        text: "Yes",
-                        onPress: () => {
-                            myCustomFunction(); // Call your function here
-                            navigation.goBack(); // Then go back (optional)
+            if (state.isRunning) {
+                Alert.alert(
+                    "Service Running",
+                    "Gesture tracking service is currently running. You must stop the service before going back.",
+                    [
+                        {
+                            text: "Cancel",
+                            style: "cancel"
+                        },
+                        {
+                            text: "Stop Service & Exit",
+                            onPress: stopServiceAndExit,
+                            style: "destructive"
                         }
-                    }
-                ]
-            );
-            return true; // prevent default behavior (going back immediately)
+                    ],
+                    { cancelable: false }
+                );
+                return true; // Prevent default behavior
+            } else {
+                // Service is not running, allow normal back navigation
+                return false; // Allow default behavior
+            }
         };
 
-        BackHandler.addEventListener("hardwareBackPress", onBackPress);
+        const backHandler = BackHandler.addEventListener("hardwareBackPress", onBackPress);
 
-        return () => BackHandler.removeEventListener("hardwareBackPress", onBackPress);
-    }, []);
+        return () => backHandler.remove();
+    }, [state.isRunning, stopServiceAndExit]);
 
     const handleGesture = useCallback(async (gesture: string): Promise<void> => {
         console.log(`Gesture detected: ${gesture} (${state.isBackgroundActive ? 'background' : 'foreground'} mode)`);

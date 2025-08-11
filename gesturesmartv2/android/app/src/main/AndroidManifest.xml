@@ -21,7 +21,6 @@
 
   <!-- NEW: Android 16 specific permissions for aggressive battery optimization -->
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />

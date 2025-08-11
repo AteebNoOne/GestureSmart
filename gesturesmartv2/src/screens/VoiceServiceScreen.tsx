@@ -79,8 +79,7 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
     'surrender',
     'go home',
     'show recent apps',
-    'go back',
-    'take screenshot'
+    'go back'
 
   ];
 
@@ -301,9 +300,7 @@ const VoiceService: React.FC<VoiceServiceProps> = ({ apiKey }) => {
             case "go back":
               await handleReturn();
               break;
-            case "take screenshot":
-              await handleTakeScreenshot()
-              break;
+
             default:
               break;
           }

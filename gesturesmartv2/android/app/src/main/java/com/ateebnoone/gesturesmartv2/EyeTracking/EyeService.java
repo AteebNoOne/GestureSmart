@@ -47,6 +47,7 @@ import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker;
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult;
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker.FaceLandmarkerOptions;
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark;
+import com.google.mediapipe.tasks.components.containers.Category;
 import com.google.mediapipe.tasks.core.BaseOptions;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.List;
@@ -54,81 +55,40 @@ import java.util.Arrays;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import android.graphics.SurfaceTexture;
-import java.util.ArrayList;
 
-public class EnhancedFaceService extends Service {
-    private static final String TAG = "EnhancedFaceService";
-    private static final String CHANNEL_ID = "FaceServiceChannel";
+public class EyeService extends Service {
+    private static final String TAG = "EyeService";
+    private static final String CHANNEL_ID = "EyeServiceChannel";
     private static final int NOTIFICATION_ID = 2;
 
-    // Performance tiers for dynamic configuration
+    // Device performance tiers
     private enum PerformanceTier {
-        LOW, MEDIUM, HIGH
+        LOW, MEDIUM, HIGH, FLAGSHIP
     }
 
-    // Dynamic device configuration
+    // Dynamic configuration based on device performance
     private static class DeviceConfig {
         final Size imageSize;
         final long processDelay;
         final int consecutiveFrames;
         final long eventCooldown;
-        final float minFaceDetectionConfidence;
-        final float minTrackingConfidence;
+        final float minFaceSize;
 
         DeviceConfig(Size imageSize, long processDelay, int consecutiveFrames,
-                     long eventCooldown, float minFaceDetectionConfidence, float minTrackingConfidence) {
+                     long eventCooldown, float minFaceSize) {
             this.imageSize = imageSize;
             this.processDelay = processDelay;
             this.consecutiveFrames = consecutiveFrames;
             this.eventCooldown = eventCooldown;
-            this.minFaceDetectionConfidence = minFaceDetectionConfidence;
-            this.minTrackingConfidence = minTrackingConfidence;
+            this.minFaceSize = minFaceSize;
         }
     }
 
-    // UPDATED THRESHOLDS - More sensitive for better detection
-    private static final float EYE_BLINK_THRESHOLD = 0.18f;          // Lower = more sensitive
-    private static final float EYE_OPEN_THRESHOLD = 0.23f;           // Eye open threshold
-    private static final float WINK_ASYMMETRY_THRESHOLD = 0.12f;     // Wink detection
-    private static final float MOUTH_OPEN_THRESHOLD = 0.035f;        // Mouth open detection
-    private static final float MOUTH_SMILE_THRESHOLD = 0.02f;        // Smile detection
-    private static final float EYEBROW_RAISE_THRESHOLD = 0.015f;     // Eyebrow raise detection
-
-    // MediaPipe 468-point face landmark indices (CORRECTED)
-    // Left eye landmarks (using correct MediaPipe indices)
-    private static final int[] LEFT_EYE_LANDMARKS = {362, 385, 387, 263, 373, 380};
-    // Right eye landmarks 
-    private static final int[] RIGHT_EYE_LANDMARKS = {33, 160, 158, 133, 153, 144};
-    
-    // Mouth landmarks for mouth open detection
-    private static final int[] MOUTH_LANDMARKS = {
-        13, 14, 15, 16, 17, 18, // Upper lip
-        0, 11, 12, 13, 14, 15,  // Lower lip
-        78, 81, 13, 82, 312, 308 // Mouth corners and center
-    };
-    
-    // More specific mouth detection points
-    private static final int MOUTH_TOP = 13;        // Top of upper lip
-    private static final int MOUTH_BOTTOM = 14;     // Bottom of lower lip  
-    private static final int MOUTH_LEFT = 78;       // Left mouth corner
-    private static final int MOUTH_RIGHT = 308;     // Right mouth corner
-    
-    // Eyebrow landmarks for eyebrow raise detection
-    private static final int[] LEFT_EYEBROW_LANDMARKS = {70, 63, 105, 66, 107};
-    private static final int[] RIGHT_EYEBROW_LANDMARKS = {296, 334, 293, 300, 276};
-    
-    // Face gesture states
-    private enum EyeState {
-        EYES_OPEN, EYES_CLOSED, BLINK, LEFT_WINK, RIGHT_WINK, UNKNOWN
-    }
-
-    private enum MouthState {
-        CLOSED, OPEN, SMILE, UNKNOWN
-    }
-    
-    private enum EyebrowState {
-        NORMAL, RAISED, UNKNOWN
-    }
+    // Eye detection thresholds
+    private static final float EYE_CLOSED_THRESHOLD = 0.8f;
+    private static final float EYE_OPEN_THRESHOLD = 0.2f;
+    private static final float GAZE_HORIZONTAL_THRESHOLD = 0.35f;
+    private static final float GAZE_VERTICAL_THRESHOLD = 0.35f;
 
     // Dynamic configuration
     private DeviceConfig deviceConfig;
@@ -136,8 +96,8 @@ public class EnhancedFaceService extends Service {
 
     // MediaPipe components
     private FaceLandmarker faceLandmarker;
+    private long lastFrameTimestamp = 0;
 
-    // Camera components
     private CameraDevice cameraDevice;
     private CameraCaptureSession cameraCaptureSession;
     private ImageReader imageReader;
@@ -150,105 +110,263 @@ public class EnhancedFaceService extends Service {
     private long lastProcessTime = 0;
     private boolean isServiceRunning = false;
 
-    // State tracking
-    private EyeState currentEyeState = EyeState.UNKNOWN;
-    private EyeState previousEyeState = EyeState.UNKNOWN;
-    private MouthState currentMouthState = MouthState.UNKNOWN;
-    private MouthState previousMouthState = MouthState.UNKNOWN;
-    private EyebrowState currentEyebrowState = EyebrowState.UNKNOWN;
-
-    // Frame counting for gesture validation
-    private int eyesOpenFrameCount = 0;
-    private int eyesClosedFrameCount = 0;
+    // Frame tracking
     private int blinkFrameCount = 0;
     private int leftWinkFrameCount = 0;
     private int rightWinkFrameCount = 0;
-    private int mouthOpenFrameCount = 0;
-    private int mouthClosedFrameCount = 0;
-    private int smileFrameCount = 0;
-    private int eyebrowRaisedFrameCount = 0;
+    private int lookLeftFrameCount = 0;
+    private int lookRightFrameCount = 0;
+    private int lookUpFrameCount = 0;
+    private int lookDownFrameCount = 0;
+    private int noneFrameCount = 0;
+    private String lastGazeDirection = "";
 
     // Performance monitoring
     private long[] processingTimes = new long[10];
     private int processingTimeIndex = 0;
+    private long lastPerformanceCheck = 0;
+    private static final long PERFORMANCE_CHECK_INTERVAL = 10000; // 10 seconds
 
-    // Event queue and handlers
     private ConcurrentLinkedQueue<WritableMap> eventQueue = new ConcurrentLinkedQueue<>();
     private Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean isReceiverRegistered = false;
 
-    // EAR calculation history for smoothing
-    private float[] leftEyeEarHistory = new float[3];   // Shorter history for faster response
-    private float[] rightEyeEarHistory = new float[3];
-    private float[] mouthHistory = new float[3];
-    private int earHistoryIndex = 0;
-
-    // Blink detection state machine
-    private boolean blinkInProgress = false;
-    private long blinkStartTime = 0;
-    private static final long MAX_BLINK_DURATION = 500; // 500ms max for valid blink
+    // Eye landmark indices (MediaPipe 478-point model)
+    private static final int LEFT_EYE_IRIS_CENTER = 468;
+    private static final int RIGHT_EYE_IRIS_CENTER = 473;
+    private static final int LEFT_EYE_LEFT_CORNER = 33;
+    private static final int LEFT_EYE_RIGHT_CORNER = 133;
+    private static final int LEFT_EYE_TOP = 159;
+    private static final int LEFT_EYE_BOTTOM = 145;
+    private static final int RIGHT_EYE_LEFT_CORNER = 362;
+    private static final int RIGHT_EYE_RIGHT_CORNER = 263;
+    private static final int RIGHT_EYE_TOP = 386;
+    private static final int RIGHT_EYE_BOTTOM = 374;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        Log.i(TAG, "Enhanced Face Service onCreate - Eye, Mouth, and Eyebrow Detection");
+        Log.i(TAG, "EyeService onCreate");
 
+        // Detect device performance and configure accordingly
         detectDevicePerformance();
         initializeDeviceConfig();
+
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, createNotification());
         registerBroadcastReceiver();
         getReactContext();
+
         initializeMediaPipe();
         startBackgroundThread();
 
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FaceService::WakeLock");
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EyeService::WakeLock");
         wakeLock.acquire();
 
         isServiceRunning = true;
-        initializeHistories();
 
-        Log.i(TAG, "Enhanced Face Service initialized for " + performanceTier + " tier device");
+        Log.i(TAG, "Device configured for " + performanceTier + " performance tier");
+        Log.i(TAG, "Image size: " + deviceConfig.imageSize.getWidth() + "x" + deviceConfig.imageSize.getHeight());
     }
 
     private void detectDevicePerformance() {
         try {
-            android.app.ActivityManager actManager = (android.app.ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            // Get device info
+            String deviceModel = Build.MODEL.toLowerCase();
+            String deviceBrand = Build.MANUFACTURER.toLowerCase();
+            int sdkVersion = Build.VERSION.SDK_INT;
+
+            // Get available RAM
+            android.app.ActivityManager actManager = (android.app.ActivityManager) getSystemService(
+                    Context.ACTIVITY_SERVICE);
             android.app.ActivityManager.MemoryInfo memInfo = new android.app.ActivityManager.MemoryInfo();
             actManager.getMemoryInfo(memInfo);
-            long totalMemory = memInfo.totalMem;
+            long availableMemory = memInfo.totalMem;
 
-            if (totalMemory > 4L * 1024 * 1024 * 1024) { // > 4GB
+            Log.i(TAG, "Device: " + deviceBrand + " " + deviceModel);
+            Log.i(TAG, "SDK: " + sdkVersion + ", Total Memory: " + (availableMemory / 1024 / 1024) + "MB");
+
+            // Determine performance tier
+            if (isHighEndDevice(deviceModel, deviceBrand, availableMemory, sdkVersion)) {
                 performanceTier = PerformanceTier.HIGH;
-            } else if (totalMemory > 2L * 1024 * 1024 * 1024) { // > 2GB
+            } else if (isMediumEndDevice(deviceModel, deviceBrand, availableMemory, sdkVersion)) {
                 performanceTier = PerformanceTier.MEDIUM;
-            } else {
+            } else if (isBasicDevice(deviceModel, deviceBrand, availableMemory, sdkVersion)) {
                 performanceTier = PerformanceTier.LOW;
+            } else {
+                // Default fallback based on memory only
+                if (availableMemory > 4L * 1024 * 1024 * 1024) {
+                    performanceTier = PerformanceTier.HIGH;
+                } else if (availableMemory > 2L * 1024 * 1024 * 1024) {
+                    performanceTier = PerformanceTier.MEDIUM;
+                } else {
+                    performanceTier = PerformanceTier.LOW;
+                }
             }
+
+            Log.i(TAG, "Detected performance tier: " + performanceTier);
+
         } catch (Exception e) {
+            Log.e(TAG, "Error detecting device performance, defaulting to MEDIUM", e);
             performanceTier = PerformanceTier.MEDIUM;
         }
     }
 
+    private boolean isHighEndDevice(String model, String brand, long maxMemory, int sdkVersion) {
+        return (brand.contains("google") && (model.contains("pixel 6") || model.contains("pixel 7") ||
+                model.contains("pixel 8") || model.contains("pixel 4a") || model.contains("pixel 5"))) ||
+                (brand.contains("samsung") && (model.contains("galaxy s") || model.contains("galaxy note"))) ||
+                (brand.contains("oneplus") && sdkVersion >= 30) ||
+                (brand.contains("sony") && model.contains("xperia 1")) ||
+                (maxMemory > 6L * 1024 * 1024 * 1024); // >6GB RAM
+    }
+
+    private boolean isMediumEndDevice(String model, String brand, long maxMemory, int sdkVersion) {
+        return (brand.contains("vivo") && (model.contains("y") || model.contains("v21") || model.contains("v20"))) ||
+                (brand.contains("oppo")
+                        && (model.contains("a") || model.contains("reno 4") || model.contains("reno 5")))
+                ||
+                (brand.contains("samsung") && (model.contains("galaxy a") || model.contains("galaxy m"))) ||
+                (brand.contains("xiaomi") && (model.contains("redmi note") || model.contains("mi 10t"))) ||
+                (maxMemory > 2L * 1024 * 1024 * 1024 && maxMemory <= 4L * 1024 * 1024 * 1024); // 2-4GB RAM
+    }
+
+    private boolean isBasicDevice(String model, String brand, long maxMemory, int sdkVersion) {
+        return maxMemory > 2L * 1024 * 1024 * 1024 && maxMemory <= 3L * 1024 * 1024 * 1024; // 2-3GB RAM
+    }
+
     private void initializeDeviceConfig() {
         switch (performanceTier) {
+            case FLAGSHIP:
+                deviceConfig = new DeviceConfig(
+                        new Size(800, 600), // High resolution
+                        50, // Fast processing
+                        2, // Quick response
+                        300, // Short cooldown
+                        0.2f // Smaller min face size
+                );
+                break;
+
             case HIGH:
-                deviceConfig = new DeviceConfig(new Size(640, 480), 50, 2, 300, 0.3f, 0.3f);
+                deviceConfig = new DeviceConfig(
+                        new Size(640, 480), // Good resolution
+                        75, // Good processing speed
+                        3, // Balanced response
+                        400, // Moderate cooldown
+                        0.25f);
                 break;
+
             case MEDIUM:
-                deviceConfig = new DeviceConfig(new Size(480, 360), 75, 3, 400, 0.4f, 0.4f);
+                deviceConfig = new DeviceConfig(
+                        new Size(480, 360), // Lower resolution for better performance
+                        150, // Slower processing for stability
+                        4, // More frames for accuracy
+                        600, // Longer cooldown
+                        0.35f // Larger min face size
+                );
                 break;
+
             case LOW:
-                deviceConfig = new DeviceConfig(new Size(320, 240), 100, 4, 500, 0.5f, 0.5f);
+                deviceConfig = new DeviceConfig(
+                        new Size(320, 240), // Low resolution
+                        200, // Slower processing
+                        5, // More frames needed
+                        750, // Long cooldown
+                        0.4f);
                 break;
         }
     }
 
-    private void initializeHistories() {
-        Arrays.fill(leftEyeEarHistory, 0.25f);
-        Arrays.fill(rightEyeEarHistory, 0.25f);
-        Arrays.fill(mouthHistory, 0.02f);
+    private Size getOptimalCameraSize() {
+        try {
+            CameraManager manager = (CameraManager) getSystemService(CAMERA_SERVICE);
+            String[] cameraIds = manager.getCameraIdList();
+
+            for (String cameraId : cameraIds) {
+                CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
+                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+
+                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) {
+                    StreamConfigurationMap map = characteristics
+                            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                    if (map != null) {
+                        Size[] outputSizes = map.getOutputSizes(ImageFormat.YUV_420_888);
+                        Size targetSize = deviceConfig.imageSize;
+                        Size bestSize = findClosestSize(outputSizes, targetSize);
+
+                        Log.i(TAG, "Optimal camera size: " + bestSize.getWidth() + "x" + bestSize.getHeight());
+                        return bestSize;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting optimal camera size", e);
+        }
+
+        return deviceConfig.imageSize;
+    }
+
+    private Size findClosestSize(Size[] sizes, Size target) {
+        if (sizes == null || sizes.length == 0)
+            return target;
+
+        Size bestSize = sizes[0];
+        long bestDiff = Long.MAX_VALUE;
+
+        for (Size size : sizes) {
+            long targetPixels = (long) target.getWidth() * target.getHeight();
+            long sizePixels = (long) size.getWidth() * size.getHeight();
+            long diff = Math.abs(targetPixels - sizePixels);
+
+            if (sizePixels <= targetPixels * 2 && diff < bestDiff) {
+                bestSize = size;
+                bestDiff = diff;
+            }
+        }
+
+        return bestSize;
+    }
+
+    private void monitorPerformance() {
+        long currentTime = System.currentTimeMillis();
+
+        if (currentTime - lastPerformanceCheck > PERFORMANCE_CHECK_INTERVAL) {
+            long totalTime = 0;
+            int validTimes = 0;
+
+            for (long time : processingTimes) {
+                if (time > 0) {
+                    totalTime += time;
+                    validTimes++;
+                }
+            }
+
+            if (validTimes > 0) {
+                long avgTime = totalTime / validTimes;
+                Log.d(TAG, "Average processing time: " + avgTime + "ms");
+
+                if (avgTime > 200 && performanceTier != PerformanceTier.LOW) {
+                    Log.w(TAG, "Performance degradation detected, reducing quality");
+                    adaptToPerformance();
+                }
+            }
+
+            lastPerformanceCheck = currentTime;
+        }
+    }
+
+    private void adaptToPerformance() {
+        if (deviceConfig.processDelay < 250) {
+            DeviceConfig newConfig = new DeviceConfig(
+                    deviceConfig.imageSize,
+                    deviceConfig.processDelay + 25,
+                    deviceConfig.consecutiveFrames + 1,
+                    deviceConfig.eventCooldown + 100,
+                    deviceConfig.minFaceSize + 0.05f);
+            deviceConfig = newConfig;
+            Log.i(TAG, "Adapted configuration for better performance");
+        }
     }
 
     private ReactContext getReactContext() {
@@ -262,19 +380,26 @@ public class EnhancedFaceService extends Service {
                 ReactContext context = module.getContext();
                 if (context != null && context.hasActiveReactInstance()) {
                     reactContext = (ReactApplicationContext) context;
-                    Log.i(TAG, "React context obtained successfully");
+                    Log.i(TAG, "React context obtained successfully from EyeModule");
                     return reactContext;
+                } else {
+                    Log.w(TAG, "React context from EyeModule is null or inactive");
                 }
+            } else {
+                Log.w(TAG, "EyeModule instance not available");
             }
             return null;
         } catch (Exception e) {
             Log.e(TAG, "Failed to get React context: " + e.getMessage());
+            e.printStackTrace();
             return null;
         }
     }
 
     private void registerBroadcastReceiver() {
-        if (isReceiverRegistered) return;
+        if (isReceiverRegistered)
+            return;
+
         IntentFilter filter = new IntentFilter("REACT_CONTEXT_AVAILABLE");
         LocalBroadcastManager.getInstance(this).registerReceiver(reactContextReceiver, filter);
         isReceiverRegistered = true;
@@ -297,337 +422,271 @@ public class EnhancedFaceService extends Service {
                     .setBaseOptions(baseOptions)
                     .setRunningMode(RunningMode.LIVE_STREAM)
                     .setNumFaces(1)
-                    .setMinFaceDetectionConfidence(deviceConfig.minFaceDetectionConfidence)
-                    .setMinFacePresenceConfidence(0.3f)
-                    .setMinTrackingConfidence(deviceConfig.minTrackingConfidence)
-                    .setOutputFaceBlendshapes(false)
+                    .setMinFaceDetectionConfidence(deviceConfig.minFaceSize)
+                    .setMinFacePresenceConfidence(0.5f)
+                    .setMinTrackingConfidence(0.5f)
+                    .setOutputFaceBlendshapes(true)
                     .setResultListener(this::handleFaceLandmarkerResult)
                     .build();
 
             faceLandmarker = FaceLandmarker.createFromOptions(this, options);
-            Log.i(TAG, "MediaPipe FaceLandmarker initialized successfully");
+            Log.i(TAG, "MediaPipe FaceLandmarker initialized");
         } catch (Exception e) {
-            Log.e(TAG, "MediaPipe initialization failed", e);
+            Log.e(TAG, "MediaPipe initialization failed: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     private void handleFaceLandmarkerResult(FaceLandmarkerResult result, MPImage input) {
         if (result == null || result.faceLandmarks().isEmpty() || !isServiceRunning) {
             if (input != null) input.close();
-            resetAllCounters();
+            resetFrameCounters();
             return;
         }
 
         try {
+            // Process first face only
+            List<Category> blendshapes = result.faceBlendshapes().get().get(0);
             List<NormalizedLandmark> landmarks = result.faceLandmarks().get(0);
-            if (landmarks.size() < 400) { // Ensure we have enough landmarks
-                if (input != null) input.close();
-                return;
-            }
+
+            float leftEyeScore = getBlendshapeScore(blendshapes, "eyeBlinkLeft");
+            float rightEyeScore = getBlendshapeScore(blendshapes, "eyeBlinkRight");
 
             long currentTime = System.currentTimeMillis();
-
-            // Calculate features with improved sensitivity
-            float leftEAR = calculateEAR(landmarks, LEFT_EYE_LANDMARKS);
-            float rightEAR = calculateEAR(landmarks, RIGHT_EYE_LANDMARKS);
-            float mouthRatio = calculateMouthOpenness(landmarks);
-            float smileRatio = calculateSmileRatio(landmarks);
-            boolean eyebrowsRaised = detectEyebrowRaise(landmarks);
-
-            // Apply smoothing
-            leftEAR = smoothValue(leftEAR, leftEyeEarHistory);
-            rightEAR = smoothValue(rightEAR, rightEyeEarHistory);
-            mouthRatio = smoothValue(mouthRatio, mouthHistory);
-
-            // Debug logging
-            if (currentTime % 1000 < 50) { // Log every second
-                Log.d(TAG, String.format("EAR: L=%.3f R=%.3f, Mouth=%.3f, Smile=%.3f", 
-                    leftEAR, rightEAR, mouthRatio, smileRatio));
-            }
-
-            // Detect gestures
-            detectEyeStates(leftEAR, rightEAR, currentTime);
-            detectMouthStates(mouthRatio, smileRatio, currentTime);
-            if (eyebrowsRaised) detectEyebrowStates(currentTime);
-
+            
+            // Detect eye gestures
+            detectBlinksAndWinks(leftEyeScore, rightEyeScore, currentTime);
+            
+            // Detect gaze direction using iris positions
+            detectGazeDirection(landmarks, currentTime);
+            
         } catch (Exception e) {
-            Log.e(TAG, "Error processing face landmarks", e);
+            Log.e(TAG, "Error processing face result", e);
         } finally {
-            if (input != null) input.close();
-        }
-    }
-
-    /**
-     * FIXED EAR calculation with correct landmark indices
-     */
-    private float calculateEAR(List<NormalizedLandmark> landmarks, int[] eyeIndices) {
-        try {
-            // Ensure we have enough landmarks
-            for (int index : eyeIndices) {
-                if (index >= landmarks.size()) {
-                    Log.w(TAG, "Landmark index " + index + " out of bounds");
-                    return 0.25f;
-                }
-            }
-
-            NormalizedLandmark p1 = landmarks.get(eyeIndices[0]);
-            NormalizedLandmark p2 = landmarks.get(eyeIndices[1]);
-            NormalizedLandmark p3 = landmarks.get(eyeIndices[2]);
-            NormalizedLandmark p4 = landmarks.get(eyeIndices[3]);
-            NormalizedLandmark p5 = landmarks.get(eyeIndices[4]);
-            NormalizedLandmark p6 = landmarks.get(eyeIndices[5]);
-
-            // Calculate vertical distances
-            double dist1 = euclideanDistance(p2, p6);
-            double dist2 = euclideanDistance(p3, p5);
-            double horizontalDist = euclideanDistance(p1, p4);
-
-            if (horizontalDist == 0) return 0.25f;
-            
-            float ear = (float) ((dist1 + dist2) / (2.0 * horizontalDist));
-            
-            // Clamp to reasonable range
-            return Math.max(0.0f, Math.min(1.0f, ear));
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error calculating EAR", e);
-            return 0.25f;
-        }
-    }
-
-    private float calculateMouthOpenness(List<NormalizedLandmark> landmarks) {
-        try {
-            if (MOUTH_TOP >= landmarks.size() || MOUTH_BOTTOM >= landmarks.size()) {
-                return 0.02f;
-            }
-            
-            NormalizedLandmark top = landmarks.get(MOUTH_TOP);
-            NormalizedLandmark bottom = landmarks.get(MOUTH_BOTTOM);
-            NormalizedLandmark left = landmarks.get(MOUTH_LEFT);
-            NormalizedLandmark right = landmarks.get(MOUTH_RIGHT);
-
-            double verticalDist = euclideanDistance(top, bottom);
-            double horizontalDist = euclideanDistance(left, right);
-
-            if (horizontalDist == 0) return 0.02f;
-            
-            // Mouth aspect ratio (similar to EAR but for mouth)
-            return (float) (verticalDist / horizontalDist);
-
-        } catch (Exception e) {
-            Log.e(TAG, "Error calculating mouth openness", e);
-            return 0.02f;
-        }
-    }
-
-    private float calculateSmileRatio(List<NormalizedLandmark> landmarks) {
-        try {
-            if (MOUTH_LEFT >= landmarks.size() || MOUTH_RIGHT >= landmarks.size()) {
-                return 0.0f;
-            }
-            
-            NormalizedLandmark leftCorner = landmarks.get(MOUTH_LEFT);
-            NormalizedLandmark rightCorner = landmarks.get(MOUTH_RIGHT);
-            NormalizedLandmark center = landmarks.get(MOUTH_TOP);
-
-            // Calculate if mouth corners are higher than center (smile)
-            float leftHeight = center.y() - leftCorner.y();
-            float rightHeight = center.y() - rightCorner.y();
-            
-            return (leftHeight + rightHeight) / 2.0f;
-
-        } catch (Exception e) {
-            return 0.0f;
-        }
-    }
-
-    private boolean detectEyebrowRaise(List<NormalizedLandmark> landmarks) {
-        try {
-            // Simple eyebrow raise detection based on eyebrow height relative to eye
-            if (LEFT_EYEBROW_LANDMARKS[0] >= landmarks.size()) return false;
-            
-            float leftEyebrowY = landmarks.get(LEFT_EYEBROW_LANDMARKS[0]).y();
-            float leftEyeY = landmarks.get(LEFT_EYE_LANDMARKS[0]).y();
-            
-            return (leftEyeY - leftEyebrowY) > EYEBROW_RAISE_THRESHOLD;
-            
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private double euclideanDistance(NormalizedLandmark p1, NormalizedLandmark p2) {
-        double dx = p1.x() - p2.x();
-        double dy = p1.y() - p2.y();
-        return Math.sqrt(dx * dx + dy * dy);
-    }
-
-    private float smoothValue(float currentValue, float[] history) {
-        history[earHistoryIndex % history.length] = currentValue;
-        
-        float sum = 0;
-        for (float value : history) {
-            sum += value;
-        }
-        
-        if (earHistoryIndex % history.length == history.length - 1) {
-            earHistoryIndex++;
-        }
-        
-        return sum / history.length;
-    }
-
-    private void detectEyeStates(float leftEAR, float rightEAR, long currentTime) {
-        float avgEAR = (leftEAR + rightEAR) / 2.0f;
-        float earDifference = Math.abs(leftEAR - rightEAR);
-
-        // Improved blink detection with state machine
-        if (!blinkInProgress && currentEyeState == EyeState.EYES_OPEN && avgEAR < EYE_BLINK_THRESHOLD) {
-            // Start of blink
-            blinkInProgress = true;
-            blinkStartTime = currentTime;
-            currentEyeState = EyeState.EYES_CLOSED;
-            eyesClosedFrameCount = 1;
-            Log.d(TAG, "Blink started, EAR: " + avgEAR);
-        } 
-        else if (blinkInProgress && avgEAR > EYE_OPEN_THRESHOLD) {
-            // End of blink
-            long blinkDuration = currentTime - blinkStartTime;
-            if (blinkDuration < MAX_BLINK_DURATION && eyesClosedFrameCount >= 2) {
-                sendFaceEvent("blink", currentTime);
-                Log.d(TAG, "Blink detected! Duration: " + blinkDuration + "ms");
-            }
-            blinkInProgress = false;
-            currentEyeState = EyeState.EYES_OPEN;
-            resetEyeCounters();
-        }
-        else if (blinkInProgress) {
-            eyesClosedFrameCount++;
-            // Check for blink timeout
-            if (currentTime - blinkStartTime > MAX_BLINK_DURATION) {
-                blinkInProgress = false;
-                currentEyeState = EyeState.EYES_CLOSED;
-                sendFaceEvent("eyes_closed", currentTime);
+            if (input != null) {
+                input.close();
             }
         }
-        
-        // Wink detection
-        if (!blinkInProgress && earDifference > WINK_ASYMMETRY_THRESHOLD) {
-            if (leftEAR < EYE_BLINK_THRESHOLD && rightEAR > EYE_OPEN_THRESHOLD) {
-                leftWinkFrameCount++;
-                if (leftWinkFrameCount >= deviceConfig.consecutiveFrames) {
-                    sendFaceEvent("wink_left", currentTime);
-                    resetEyeCounters();
-                }
-            } else if (rightEAR < EYE_BLINK_THRESHOLD && leftEAR > EYE_OPEN_THRESHOLD) {
-                rightWinkFrameCount++;
-                if (rightWinkFrameCount >= deviceConfig.consecutiveFrames) {
-                    sendFaceEvent("wink_right", currentTime);
-                    resetEyeCounters();
-                }
+    }
+
+    private float getBlendshapeScore(List<Category> blendshapes, String name) {
+        for (Category category : blendshapes) {
+            if (category.categoryName().equals(name)) {
+                return category.score();
             }
-        } else {
+        }
+        return 0.0f;
+    }
+
+    private void detectBlinksAndWinks(float leftEyeScore, float rightEyeScore, long currentTime) {
+        // Both eyes closed = blink
+        if (leftEyeScore > EYE_CLOSED_THRESHOLD && rightEyeScore > EYE_CLOSED_THRESHOLD) {
+            blinkFrameCount++;
             leftWinkFrameCount = 0;
             rightWinkFrameCount = 0;
+
+            if (blinkFrameCount >= deviceConfig.consecutiveFrames) {
+                sendEyeEvent("blink", currentTime);
+                resetFrameCounters();
+            }
+        }
+        // Left wink: Left eye closed, right eye open
+        else if (leftEyeScore > EYE_CLOSED_THRESHOLD && rightEyeScore < EYE_OPEN_THRESHOLD) {
+            leftWinkFrameCount++;
+            blinkFrameCount = 0;
+            rightWinkFrameCount = 0;
+
+            if (leftWinkFrameCount >= deviceConfig.consecutiveFrames) {
+                sendEyeEvent("wink_left", currentTime);
+                resetFrameCounters();
+            }
+        }
+        // Right wink: Right eye closed, left eye open
+        else if (rightEyeScore > EYE_CLOSED_THRESHOLD && leftEyeScore < EYE_OPEN_THRESHOLD) {
+            rightWinkFrameCount++;
+            blinkFrameCount = 0;
+            leftWinkFrameCount = 0;
+
+            if (rightWinkFrameCount >= deviceConfig.consecutiveFrames) {
+                sendEyeEvent("wink_right", currentTime);
+                resetFrameCounters();
+            }
+        }
+        // Reset counters if no eye event detected
+        else {
+            if (blinkFrameCount > 0) blinkFrameCount--;
+            if (leftWinkFrameCount > 0) leftWinkFrameCount--;
+            if (rightWinkFrameCount > 0) rightWinkFrameCount--;
+        }
+    }
+
+    private void detectGazeDirection(List<NormalizedLandmark> landmarks, long currentTime) {
+        if (landmarks.size() < 478) {
+            resetGazeFrameCounters();
+            return;
+        }
+
+        // Calculate gaze direction based on iris position relative to eye boundaries
+        float leftHorizRatio = calculateEyeRatio(
+                landmarks.get(LEFT_EYE_IRIS_CENTER),
+                landmarks.get(LEFT_EYE_LEFT_CORNER),
+                landmarks.get(LEFT_EYE_RIGHT_CORNER),
+                true
+        );
+        
+        float rightHorizRatio = calculateEyeRatio(
+                landmarks.get(RIGHT_EYE_IRIS_CENTER),
+                landmarks.get(RIGHT_EYE_LEFT_CORNER),
+                landmarks.get(RIGHT_EYE_RIGHT_CORNER),
+                true
+        );
+        
+        float leftVertRatio = calculateEyeRatio(
+                landmarks.get(LEFT_EYE_IRIS_CENTER),
+                landmarks.get(LEFT_EYE_TOP),
+                landmarks.get(LEFT_EYE_BOTTOM),
+                false
+        );
+        
+        float rightVertRatio = calculateEyeRatio(
+                landmarks.get(RIGHT_EYE_IRIS_CENTER),
+                landmarks.get(RIGHT_EYE_TOP),
+                landmarks.get(RIGHT_EYE_BOTTOM),
+                false
+        );
+        
+        // Average both eyes
+        float avgHoriz = (leftHorizRatio + rightHorizRatio) / 2;
+        float avgVert = (leftVertRatio + rightVertRatio) / 2;
+        
+        String currentGazeDirection = "";
+        
+        // Horizontal gaze detection
+        if (avgHoriz < GAZE_HORIZONTAL_THRESHOLD) {
+            currentGazeDirection = "look_left";
+        } else if (avgHoriz > (1 - GAZE_HORIZONTAL_THRESHOLD)) {
+            currentGazeDirection = "look_right";
+        } 
+        // Vertical gaze detection
+        else if (avgVert < GAZE_VERTICAL_THRESHOLD) {
+            currentGazeDirection = "look_up";
+        } else if (avgVert > (1 - GAZE_VERTICAL_THRESHOLD)) {
+            currentGazeDirection = "look_down";
+        } 
+        // Looking straight
+        else {
+            currentGazeDirection = "none";
         }
         
-        // Eyes open detection
-        if (!blinkInProgress && avgEAR > EYE_OPEN_THRESHOLD && currentEyeState != EyeState.EYES_OPEN) {
-            eyesOpenFrameCount++;
-            if (eyesOpenFrameCount >= deviceConfig.consecutiveFrames) {
-                sendFaceEvent("eyes_open", currentTime);
-                currentEyeState = EyeState.EYES_OPEN;
-            }
-        } else if (avgEAR <= EYE_OPEN_THRESHOLD) {
-            eyesOpenFrameCount = 0;
-        }
+        // Process gaze direction with frame counting
+        if (currentGazeDirection.equals(lastGazeDirection) && !currentGazeDirection.isEmpty()) {
+            incrementGazeFrameCount(currentGazeDirection);
 
-        previousEyeState = currentEyeState;
-    }
-
-    private void detectMouthStates(float mouthRatio, float smileRatio, long currentTime) {
-        // Mouth open detection
-        if (mouthRatio > MOUTH_OPEN_THRESHOLD) {
-            mouthOpenFrameCount++;
-            mouthClosedFrameCount = 0;
-            if (mouthOpenFrameCount >= deviceConfig.consecutiveFrames && 
-                currentMouthState != MouthState.OPEN) {
-                sendFaceEvent("mouth_open", currentTime);
-                currentMouthState = MouthState.OPEN;
+            int requiredFrames = getRequiredFramesForGaze(currentGazeDirection);
+            if (getGazeFrameCount(currentGazeDirection) >= requiredFrames) {
+                sendEyeEvent(currentGazeDirection, currentTime);
+                resetGazeFrameCounters();
             }
         } else {
-            mouthClosedFrameCount++;
-            mouthOpenFrameCount = 0;
-            if (mouthClosedFrameCount >= deviceConfig.consecutiveFrames && 
-                currentMouthState != MouthState.CLOSED) {
-                sendFaceEvent("mouth_closed", currentTime);
-                currentMouthState = MouthState.CLOSED;
-            }
-        }
-
-        // Smile detection
-        if (smileRatio > MOUTH_SMILE_THRESHOLD) {
-            smileFrameCount++;
-            if (smileFrameCount >= deviceConfig.consecutiveFrames) {
-                sendFaceEvent("smile", currentTime);
-                smileFrameCount = 0; // Reset to avoid spam
-            }
-        } else {
-            smileFrameCount = 0;
+            lastGazeDirection = currentGazeDirection;
+            resetGazeFrameCounters();
         }
     }
-
-    private void detectEyebrowStates(long currentTime) {
-        eyebrowRaisedFrameCount++;
-        if (eyebrowRaisedFrameCount >= deviceConfig.consecutiveFrames && 
-            currentEyebrowState != EyebrowState.RAISED) {
-            sendFaceEvent("eyebrow_raise", currentTime);
-            currentEyebrowState = EyebrowState.RAISED;
-        }
+    
+    private float calculateEyeRatio(NormalizedLandmark center, 
+                                  NormalizedLandmark bound1, 
+                                  NormalizedLandmark bound2, 
+                                  boolean isHorizontal) {
+        float centerVal = isHorizontal ? center.x() : center.y();
+        float bound1Val = isHorizontal ? bound1.x() : bound1.y();
+        float bound2Val = isHorizontal ? bound2.x() : bound2.y();
+        
+        float minBound = Math.min(bound1Val, bound2Val);
+        float maxBound = Math.max(bound1Val, bound2Val);
+        float range = maxBound - minBound;
+        
+        if (range == 0) return 0.5f; // Prevent division by zero
+        
+        return (centerVal - minBound) / range;
     }
 
-    private void resetEyeCounters() {
-        eyesOpenFrameCount = 0;
-        eyesClosedFrameCount = 0;
+    private void resetFrameCounters() {
         blinkFrameCount = 0;
         leftWinkFrameCount = 0;
         rightWinkFrameCount = 0;
+        resetGazeFrameCounters();
     }
 
-    private void resetMouthCounters() {
-        mouthOpenFrameCount = 0;
-        mouthClosedFrameCount = 0;
-        smileFrameCount = 0;
+    private void resetGazeFrameCounters() {
+        lookLeftFrameCount = 0;
+        lookRightFrameCount = 0;
+        lookUpFrameCount = 0;
+        lookDownFrameCount = 0;
+        noneFrameCount = 0;
     }
 
-    private void resetAllCounters() {
-        resetEyeCounters();
-        resetMouthCounters();
-        eyebrowRaisedFrameCount = 0;
+    private void incrementGazeFrameCount(String direction) {
+        switch (direction) {
+            case "look_left":
+                lookLeftFrameCount++;
+                break;
+            case "look_right":
+                lookRightFrameCount++;
+                break;
+            case "look_up":
+                lookUpFrameCount++;
+                break;
+            case "look_down":
+                lookDownFrameCount++;
+                break;
+            case "none":
+                noneFrameCount++;
+                break;
+        }
     }
 
-    private void sendFaceEvent(String eventType, long currentTime) {
+    private int getGazeFrameCount(String direction) {
+        switch (direction) {
+            case "look_left":
+                return lookLeftFrameCount;
+            case "look_right":
+                return lookRightFrameCount;
+            case "look_up":
+                return lookUpFrameCount;
+            case "look_down":
+                return lookDownFrameCount;
+            case "none":
+                return noneFrameCount;
+            default:
+                return 0;
+        }
+    }
+
+    private int getRequiredFramesForGaze(String direction) {
+        return direction.equals("none") ? deviceConfig.consecutiveFrames + 2 : deviceConfig.consecutiveFrames;
+    }
+
+    private void sendEyeEvent(String eventType, long currentTime) {
         if (currentTime - lastEventTime < deviceConfig.eventCooldown) {
             return;
         }
-        
+
         lastEventTime = currentTime;
-        
+
         WritableMap params = Arguments.createMap();
         params.putString("event", eventType);
         params.putLong("timestamp", currentTime);
-        
+
         ReactContext context = getReactContext();
         if (context != null && context.hasActiveReactInstance()) {
             sendEventToJS(params, context);
         } else {
+            Log.d(TAG, "Queueing event: " + eventType);
             eventQueue.offer(params);
             if (backgroundHandler != null) {
                 backgroundHandler.postDelayed(this::flushEventQueue, 500);
             }
         }
-        
-        Log.i(TAG, "Face event detected: " + eventType);
     }
 
     private void sendEventToJS(WritableMap params, ReactContext context) {
@@ -635,47 +694,68 @@ public class EnhancedFaceService extends Service {
             EyeModule module = EyeModule.getInstance();
             if (module != null) {
                 module.sendEyeEvent(params.getString("event"));
-                Log.d(TAG, "Successfully sent event: " + params.getString("event"));
+                Log.d(TAG, "Successfully emitted event through EyeModule: " + params.getString("event"));
+            } else {
+                Log.e(TAG, "EyeModule instance is null");
+                eventQueue.offer(params);
             }
         } catch (Exception e) {
-            Log.e(TAG, "Failed to send event: " + e.getMessage());
+            Log.e(TAG, "Failed to send eye event: " + e.getMessage());
+            e.printStackTrace();
             eventQueue.offer(params);
         }
     }
 
+    private static final int MAX_RETRY_ATTEMPTS = 20;
+    private int retryAttempts = 0;
+
     private void flushEventQueue() {
         if (!isServiceRunning) {
+            Log.w(TAG, "Service not running, clearing event queue");
             eventQueue.clear();
             return;
         }
 
         ReactContext context = getReactContext();
         if (context != null && context.hasActiveReactInstance()) {
+            retryAttempts = 0;
             mainHandler.post(() -> {
                 try {
                     int processedEvents = 0;
-                    while (!eventQueue.isEmpty() && processedEvents < 3) {
+                    while (!eventQueue.isEmpty() && processedEvents < 10) {
                         WritableMap event = eventQueue.poll();
                         if (event != null) {
                             sendEventToJS(event, context);
                             processedEvents++;
                         }
                     }
-                    
+
                     if (!eventQueue.isEmpty()) {
-                        backgroundHandler.postDelayed(this::flushEventQueue, 300);
+                        backgroundHandler.postDelayed(this::flushEventQueue, 100);
                     }
                 } catch (Exception e) {
-                    Log.e(TAG, "Error flushing event queue", e);
+                    Log.e(TAG, "Error flushing event queue: " + e.getMessage());
+                    e.printStackTrace();
+                    if (!eventQueue.isEmpty()) {
+                        backgroundHandler.postDelayed(this::flushEventQueue, 500);
+                    }
                 }
             });
         } else {
-            backgroundHandler.postDelayed(this::flushEventQueue, 1000);
+            retryAttempts++;
+            if (retryAttempts < MAX_RETRY_ATTEMPTS) {
+                Log.d(TAG, "React context not ready, retry attempt " + retryAttempts + "/" + MAX_RETRY_ATTEMPTS);
+                backgroundHandler.postDelayed(this::flushEventQueue, 500);
+            } else {
+                Log.w(TAG, "Max retry attempts reached, clearing event queue");
+                eventQueue.clear();
+                retryAttempts = 0;
+            }
         }
     }
 
     private void startBackgroundThread() {
-        backgroundThread = new HandlerThread("FaceCameraBackground", Thread.NORM_PRIORITY);
+        backgroundThread = new HandlerThread("EyeCameraBackground");
         backgroundThread.start();
         backgroundHandler = new Handler(backgroundThread.getLooper());
         Log.i(TAG, "Background thread started");
@@ -684,15 +764,10 @@ public class EnhancedFaceService extends Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID,
-                "Enhanced Face Gesture Detection",
-                NotificationManager.IMPORTANCE_LOW
-            );
-            channel.setDescription("Eye, mouth, and eyebrow gesture detection");
-            channel.setShowBadge(false);
-            channel.enableLights(false);
-            channel.enableVibration(false);
-            
+                    CHANNEL_ID,
+                    "Eye Service",
+                    NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("Eye tracking service");
             NotificationManager manager = getSystemService(NotificationManager.class);
             manager.createNotificationChannel(channel);
         }
@@ -701,20 +776,16 @@ public class EnhancedFaceService extends Service {
     private Notification createNotification() {
         Intent notificationIntent = new Intent(this, MainActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent, 
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0
-        );
+                this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE);
 
         return new Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Enhanced Face Gesture Detection Active")
-            .setContentText("Detecting eyes, mouth, eyebrows (" + performanceTier + ")")
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .build();
+                .setContentTitle("Eye Tracking Active")
+                .setContentText("Processing eye movements in background (" + performanceTier + ")")
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentIntent(pendingIntent)
+                .build();
     }
 
-    // Camera Management
     private final CameraDevice.StateCallback stateCallback = new CameraDevice.StateCallback() {
         @Override
         public void onOpened(@NonNull CameraDevice camera) {
@@ -725,7 +796,7 @@ public class EnhancedFaceService extends Service {
 
         @Override
         public void onDisconnected(@NonNull CameraDevice camera) {
-            Log.w(TAG, "Camera disconnected");
+            Log.w(TAG, "Camera disconnected - attempting restart");
             camera.close();
             cameraDevice = null;
             if (isServiceRunning) {
@@ -735,7 +806,7 @@ public class EnhancedFaceService extends Service {
 
         @Override
         public void onError(@NonNull CameraDevice camera, int error) {
-            Log.e(TAG, "Camera error: " + error);
+            Log.e(TAG, "Camera Error: " + error);
             camera.close();
             cameraDevice = null;
             if (isServiceRunning) {
@@ -748,56 +819,12 @@ public class EnhancedFaceService extends Service {
         if (backgroundHandler != null && isServiceRunning) {
             backgroundHandler.postDelayed(() -> {
                 if (isServiceRunning) {
-                    Log.i(TAG, "Restarting camera after error");
+                    Log.i(TAG, "Attempting camera restart...");
                     stopCamera();
                     startCamera();
                 }
-            }, 3000);
+            }, 2000);
         }
-    }
-
-    private Size getOptimalCameraSize() {
-        try {
-            CameraManager manager = (CameraManager) getSystemService(CAMERA_SERVICE);
-            String[] cameraIds = manager.getCameraIdList();
-
-            for (String cameraId : cameraIds) {
-                CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
-                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
-
-                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) {
-                    StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                    if (map != null) {
-                        Size[] outputSizes = map.getOutputSizes(ImageFormat.YUV_420_888);
-                        return findBestSize(outputSizes, deviceConfig.imageSize);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error getting optimal camera size", e);
-        }
-        return deviceConfig.imageSize;
-    }
-
-    private Size findBestSize(Size[] sizes, Size target) {
-        if (sizes == null || sizes.length == 0) return target;
-
-        Size bestSize = sizes[0];
-        long bestDiff = Long.MAX_VALUE;
-        long targetPixels = (long) target.getWidth() * target.getHeight();
-
-        for (Size size : sizes) {
-            long sizePixels = (long) size.getWidth() * size.getHeight();
-            long diff = Math.abs(targetPixels - sizePixels);
-
-            if (sizePixels <= targetPixels * 1.5 && diff < bestDiff) {
-                bestSize = size;
-                bestDiff = diff;
-            }
-        }
-
-        Log.i(TAG, "Selected camera size: " + bestSize.getWidth() + "x" + bestSize.getHeight());
-        return bestSize;
     }
 
     private Bitmap convertYuvToBitmap(Image image) {
@@ -813,17 +840,16 @@ public class EnhancedFaceService extends Service {
             int vSize = vBuffer.remaining();
 
             byte[] nv21 = new byte[ySize + uSize + vSize];
+
             yBuffer.get(nv21, 0, ySize);
             vBuffer.get(nv21, ySize, vSize);
             uBuffer.get(nv21, ySize + vSize, uSize);
 
-            YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, 
-                image.getWidth(), image.getHeight(), null);
+            YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21, image.getWidth(), image.getHeight(), null);
             out = new ByteArrayOutputStream();
-            yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 
-                80, out);
-            
+            yuvImage.compressToJpeg(new Rect(0, 0, yuvImage.getWidth(), yuvImage.getHeight()), 90, out);
             byte[] imageBytes = out.toByteArray();
+
             Bitmap bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.length);
 
             if (bitmap != null) {
@@ -835,14 +861,14 @@ public class EnhancedFaceService extends Service {
 
             return bitmap;
         } catch (Exception e) {
-            Log.e(TAG, "Error converting YUV to Bitmap", e);
+            Log.e(TAG, "Error converting YUV to Bitmap: " + e.getMessage());
             return null;
         } finally {
             if (out != null) {
                 try {
                     out.close();
                 } catch (Exception e) {
-                    Log.e(TAG, "Error closing output stream", e);
+                    Log.e(TAG, "Error closing stream", e);
                 }
             }
         }
@@ -851,12 +877,8 @@ public class EnhancedFaceService extends Service {
     private void createCameraPreviewSession() {
         try {
             Size optimalSize = getOptimalCameraSize();
-            imageReader = ImageReader.newInstance(
-                optimalSize.getWidth(), 
-                optimalSize.getHeight(),
-                ImageFormat.YUV_420_888, 
-                2
-            );
+            imageReader = ImageReader.newInstance(optimalSize.getWidth(), optimalSize.getHeight(),
+                    ImageFormat.YUV_420_888, 2);
 
             imageReader.setOnImageAvailableListener(reader -> {
                 if (!isProcessing || !isServiceRunning) {
@@ -866,7 +888,8 @@ public class EnhancedFaceService extends Service {
                 long currentTime = System.currentTimeMillis();
                 if (currentTime - lastProcessTime < deviceConfig.processDelay) {
                     Image image = reader.acquireLatestImage();
-                    if (image != null) image.close();
+                    if (image != null)
+                        image.close();
                     return;
                 }
                 lastProcessTime = currentTime;
@@ -877,14 +900,25 @@ public class EnhancedFaceService extends Service {
                     if (image != null && faceLandmarker != null) {
                         Bitmap bitmap = convertYuvToBitmap(image);
                         if (bitmap != null) {
+                            // Start processing time measurement
+                            long startTime = System.currentTimeMillis();
+                            
                             MPImage mpImage = new BitmapImageBuilder(bitmap).build();
                             long frameTime = SystemClock.uptimeMillis();
-                            
                             faceLandmarker.detectAsync(mpImage, frameTime);
+                            
+                            // Record processing time
+                            long processingTime = System.currentTimeMillis() - startTime;
+                            processingTimes[processingTimeIndex] = processingTime;
+                            processingTimeIndex = (processingTimeIndex + 1) % processingTimes.length;
+                            
+                            monitorPerformance();
+                        } else {
+                            Log.w(TAG, "Failed to convert image to bitmap");
                         }
                     }
                 } catch (Exception e) {
-                    Log.e(TAG, "Error processing camera image", e);
+                    Log.e(TAG, "Error processing image: " + e.getMessage());
                 } finally {
                     if (image != null) {
                         image.close();
@@ -901,38 +935,39 @@ public class EnhancedFaceService extends Service {
             builder.addTarget(imageReader.getSurface());
 
             cameraDevice.createCaptureSession(
-                Arrays.asList(previewSurface, imageReader.getSurface()),
-                new CameraCaptureSession.StateCallback() {
-                    @Override
-                    public void onConfigured(@NonNull CameraCaptureSession session) {
-                        Log.i(TAG, "Camera capture session configured");
-                        if (cameraDevice == null) return;
+                    Arrays.asList(previewSurface, imageReader.getSurface()),
+                    new CameraCaptureSession.StateCallback() {
+                        @Override
+                        public void onConfigured(@NonNull CameraCaptureSession session) {
+                            Log.i(TAG, "Camera capture session configured");
+                            if (cameraDevice == null)
+                                return;
 
-                        cameraCaptureSession = session;
-                        try {
-                            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
-                            builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
-                            builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
-                            builder.set(CaptureRequest.STATISTICS_FACE_DETECT_MODE, 
-                                CaptureRequest.STATISTICS_FACE_DETECT_MODE_SIMPLE);
+                            cameraCaptureSession = session;
+                            try {
+                                builder.set(CaptureRequest.CONTROL_AF_MODE,
+                                        CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
+                                builder.set(CaptureRequest.CONTROL_AE_MODE,
+                                        CaptureRequest.CONTROL_AE_MODE_ON);
+                                builder.set(CaptureRequest.CONTROL_AWB_MODE,
+                                        CaptureRequest.CONTROL_AWB_MODE_AUTO);
 
-                            CaptureRequest request = builder.build();
-                            cameraCaptureSession.setRepeatingRequest(request, null, backgroundHandler);
+                                CaptureRequest request = builder.build();
+                                cameraCaptureSession.setRepeatingRequest(request, null, backgroundHandler);
 
-                            isProcessing = true;
-                            Log.i(TAG, "Enhanced face gesture detection started");
-                        } catch (CameraAccessException e) {
-                            Log.e(TAG, "Failed to start camera preview", e);
+                                isProcessing = true;
+                                Log.i(TAG, "Camera preview started successfully - processing enabled");
+                            } catch (CameraAccessException e) {
+                                Log.e(TAG, "Failed to start camera preview", e);
+                            }
                         }
-                    }
 
-                    @Override
-                    public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-                        Log.e(TAG, "Camera capture session configuration failed");
-                    }
-                },
-                backgroundHandler
-            );
+                        @Override
+                        public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                            Log.e(TAG, "Failed to configure camera session");
+                        }
+                    },
+                    backgroundHandler);
         } catch (CameraAccessException e) {
             Log.e(TAG, "Failed to create camera preview session", e);
         }
@@ -940,7 +975,7 @@ public class EnhancedFaceService extends Service {
 
     private void startCamera() {
         if (!isServiceRunning) {
-            Log.w(TAG, "Service not running, cannot start camera");
+            Log.w(TAG, "Service not running, skipping camera start");
             return;
         }
 
@@ -958,12 +993,11 @@ public class EnhancedFaceService extends Service {
                 }
             }
 
-            if (frontCameraId != null) {
-                Log.i(TAG, "Opening front camera: " + frontCameraId);
-                manager.openCamera(frontCameraId, stateCallback, backgroundHandler);
-            } else {
-                Log.e(TAG, "No front camera found");
-            }
+            String selectedCameraId = frontCameraId != null ? frontCameraId : cameraIds[0];
+            Log.i(TAG, "Opening camera: " + selectedCameraId + " (Front camera: "
+                    + (frontCameraId != null ? "YES" : "NO") + ")");
+
+            manager.openCamera(selectedCameraId, stateCallback, backgroundHandler);
         } catch (CameraAccessException | SecurityException e) {
             Log.e(TAG, "Failed to open camera", e);
         }
@@ -973,20 +1007,13 @@ public class EnhancedFaceService extends Service {
         isProcessing = false;
 
         if (cameraCaptureSession != null) {
-            try {
-                cameraCaptureSession.stopRepeating();
-                cameraCaptureSession.close();
-            } catch (Exception e) {
-                Log.e(TAG, "Error stopping camera session", e);
-            }
+            cameraCaptureSession.close();
             cameraCaptureSession = null;
         }
-
         if (cameraDevice != null) {
             cameraDevice.close();
             cameraDevice = null;
         }
-
         if (imageReader != null) {
             imageReader.close();
             imageReader = null;
@@ -997,12 +1024,12 @@ public class EnhancedFaceService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.i(TAG, "onStartCommand - Enhanced face gesture detection starting");
+        Log.i(TAG, "onStartCommand called with flags: " + flags + ", startId: " + startId);
 
         if (!isServiceRunning) {
-            Log.i(TAG, "Reinitializing service components");
+            Log.w(TAG, "Service was not running, reinitializing...");
             isServiceRunning = true;
-            
+
             if (faceLandmarker == null) {
                 initializeMediaPipe();
             }
@@ -1017,16 +1044,12 @@ public class EnhancedFaceService extends Service {
 
     @Override
     public void onDestroy() {
-        Log.i(TAG, "Enhanced Face Service onDestroy - Cleaning up resources");
+        Log.i(TAG, "EyeService onDestroy");
         isServiceRunning = false;
         isProcessing = false;
 
         if (isReceiverRegistered) {
-            try {
-                LocalBroadcastManager.getInstance(this).unregisterReceiver(reactContextReceiver);
-            } catch (Exception e) {
-                Log.e(TAG, "Error unregistering receiver", e);
-            }
+            LocalBroadcastManager.getInstance(this).unregisterReceiver(reactContextReceiver);
         }
 
         stopCamera();
@@ -1042,18 +1065,9 @@ public class EnhancedFaceService extends Service {
 
         if (backgroundThread != null) {
             backgroundThread.quitSafely();
-            try {
-                backgroundThread.join(1000);
-            } catch (InterruptedException e) {
-                Log.w(TAG, "Background thread interrupted during shutdown");
-            }
             backgroundThread = null;
-            backgroundHandler = null;
         }
 
-        eventQueue.clear();
-
-        Log.i(TAG, "Enhanced Face Service destroyed successfully");
         super.onDestroy();
     }
 
