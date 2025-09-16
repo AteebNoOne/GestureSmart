@@ -4,15 +4,19 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - V2_Code
+      - "**"   # runs on all branches
 
 permissions:
-  contents: write  # Needed for creating releases
+  contents: write
 
 jobs:
   build-android:
     name: Build & Release Android APK
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: MobileApp   # 👈 all steps run inside /MobileApp
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,6 +24,8 @@ jobs:
       - name: Get version from package.json
         id: package-version
         uses: martinbeentjes/npm-get-version-action@v1.3.1
+        with:
+          path: MobileApp  # 👈 package.json is inside /MobileApp
 
       - name: Setup Java 20
         uses: actions/setup-java@v3
@@ -30,8 +36,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version-file: MobileApp/.nvmrc
           cache: npm
+          cache-dependency-path: MobileApp/package-lock.json
 
       - name: Install npm dependencies
         run: npm ci
@@ -52,6 +59,6 @@ jobs:
         with:
           tag_name: v${{ steps.package-version.outputs.current-version }}-android
           name: Android Release v${{ steps.package-version.outputs.current-version }}
-          files: android/app/build/outputs/apk/release/app-release.apk
+          files: MobileApp/android/app/build/outputs/apk/release/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
